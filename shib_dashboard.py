@@ -68,16 +68,15 @@ def calculate_zscore(current_mvrv, hist_series):
     std = np.std(hist_series)
     return (current_mvrv - mean) / std if std > 0 else None
 
-def get_action(zscore):
-    if zscore is None:
-        return "—"
-    if zscore > 2.0: return "🔴 Strong Sell"
-    if zscore > 1.0: return "🟡 Take Profit"
-    if zscore < -1.5: return "🟢 Strong Buy"
-    if zscore < -1.0: return "🟢 Buy Zone"
+def get_action(z):
+    if z is None: return "—"
+    if z > 2.0: return "🔴 Strong Sell"
+    if z > 1.0: return "🟡 Take Profit"
+    if z < -1.5: return "🟢 Strong Buy"
+    if z < -1.0: return "🟢 Buy Zone"
     return "⚪ Neutral"
 
-# ====================== MAIN DASHBOARD ======================
+# ====================== MAIN ======================
 placeholder = st.empty()
 
 while True:
@@ -87,62 +86,60 @@ while True:
 
         if not current:
             st.error("Loading data...")
-            st.stop()
+        else:
+            price = current['price']
+            mcap = current['market_cap']
+            current_mvrv = calculate_mvrv(mcap)
 
-        price = current['price']
-        mcap = current['market_cap']
-        current_mvrv = calculate_mvrv(mcap)
+            # Price with 8 decimal places
+            st.metric("Price", f"${price:.8f}")
 
-        # Price with exactly 8 decimal places
-        st.metric("Price", f"${price:.8f}")
+            st.divider()
 
-        st.divider()
+            # Current MVRV
+            col1, col2 = st.columns([3, 1])
+            with col1:
+                st.metric("MVRV", f"{current_mvrv:.2f}" if current_mvrv else "—")
+            with col2:
+                with st.expander("ℹ️", expanded=False):
+                    st.caption("Market Cap / Realized Cap")
 
-        # Current MVRV
-        col1, col2 = st.columns([3, 1])
-        with col1:
-            st.metric("MVRV", f"{current_mvrv:.2f}" if current_mvrv else "—")
-        with col2:
-            with st.expander("ℹ️", expanded=False):
-                st.caption("Market Cap / Realized Cap")
+            st.divider()
 
-        st.divider()
+            # Z-Scores
+            st.subheader("Z-Score by Period")
+            for i in range(0, len(PERIODS), 2):
+                cols = st.columns(2)
+                for j in range(2):
+                    if i + j < len(PERIODS):
+                        label, days = PERIODS[i + j]
+                        with cols[j]:
+                            period_df = hist.tail(days) if not hist.empty else hist
+                            hist_series = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
+                            zs = calculate_zscore(current_mvrv, hist_series)
+                            st.metric(label, f"{zs:.2f}" if zs is not None else "—")
+                            st.caption(get_action(zs))
 
-        # Z-Scores
-        st.subheader("Z-Score by Period")
-        for i in range(0, len(PERIODS), 2):
-            cols = st.columns(2)
-            for j in range(2):
-                if i + j < len(PERIODS):
-                    label, days = PERIODS[i + j]
-                    with cols[j]:
-                        period_df = hist.tail(days) if not hist.empty else hist
-                        hist_series = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
-                        zs = calculate_zscore(current_mvrv, hist_series)
-                        
-                        st.metric(label, f"{zs:.2f}" if zs is not None else "—")
-                        st.caption(get_action(zs))
+            st.divider()
 
-        st.divider()
+            # Charts
+            st.subheader("Charts")
+            tab1, tab2 = st.tabs(["Market Cap", "Price"])
 
-        # Charts
-        st.subheader("Charts")
-        tab1, tab2 = st.tabs(["Market Cap", "Price"])
+            with tab1:
+                if not hist.empty:
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=hist.index, y=hist['market_cap']/1e9, line=dict(width=2.5)))
+                    fig.add_hline(y=REALIZED_CAP/1e9, line_dash="dash", line_color="red")
+                    fig.update_layout(height=280, margin=dict(l=10,r=10,t=20,b=10))
+                    st.plotly_chart(fig, use_container_width=True)
 
-        with tab1:
-            if not hist.empty:
-                fig = go.Figure()
-                fig.add_trace(go.Scatter(x=hist.index, y=hist['market_cap']/1e9, line=dict(width=2.5)))
-                fig.add_hline(y=REALIZED_CAP/1e9, line_dash="dash", line_color="red")
-                fig.update_layout(height=280, margin=dict(l=10, r=10, t=20, b=10))
-                st.plotly_chart(fig, use_container_width=True)
-
-        with tab2:
-            if not hist.empty:
-                fig2 = go.Figure()
-                fig2.add_trace(go.Scatter(x=hist.index, y=hist['price'], line=dict(width=2.5)))
-                fig2.update_layout(height=280, margin=dict(l=10, r=10, t=20, b=10))
-                st.plotly_chart(fig2, use_container_width=True)
+            with tab2:
+                if not hist.empty:
+                    fig2 = go.Figure()
+                    fig2.add_trace(go.Scatter(x=hist.index, y=hist['price'], line=dict(width=2.5)))
+                    fig2.update_layout(height=280, margin=dict(l=10,r=10,t=20,b=10))
+                    st.plotly_chart(fig2, use_container_width=True)
 
     if not auto_refresh:
         break
