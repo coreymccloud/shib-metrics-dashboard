@@ -31,7 +31,7 @@ auto_refresh = st.toggle("🔄 Auto-refresh every 15 seconds", value=True)
 # ====================== CONSTANTS ======================
 REALIZED_CAP = 3_300_000_000
 
-# Time periods in ASCENDING order
+# Strictly ascending order
 PERIODS = [
     ("3 Days", 3),
     ("5 Days", 5),
@@ -159,27 +159,23 @@ while True:
 
             st.divider()
 
-            # MVRV Z-Score Section - ASCENDING ORDER
+            # MVRV Z-Score - ASCENDING ORDER (Fixed)
             st.subheader("MVRV Z-Score by Time Period")
             
-            zcol1, zcol2 = st.columns([3, 1])
-            with zcol1:
-                zscore_cols = st.columns(3)
-                for idx, (label, days) in enumerate(PERIODS):
-                    with zscore_cols[idx % 3]:
-                        period_df = hist_df.tail(days) if not hist_df.empty else hist_df
-                        hist_mvrv = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
-                        zscore = calculate_zscore(current_mvrv, hist_mvrv)
-                        
-                        st.metric(label, f"{zscore:.2f}" if zscore is not None else "—")
-                        st.caption(get_zscore_action(zscore))
-
-            with zcol2:
-                with st.expander("What is MVRV Z-Score?", expanded=False):
-                    st.markdown("""
-                    **Z-Score = (Current MVRV − Historical Avg) ÷ Std Dev**  
-                    Shows how extreme today's valuation is vs history.
-                    """)
+            # Use 2 rows of 3 columns for clean ascending display
+            for row in range(2):
+                cols = st.columns(3)
+                for i in range(3):
+                    idx = row * 3 + i
+                    if idx < len(PERIODS):
+                        label, days = PERIODS[idx]
+                        with cols[i]:
+                            period_df = hist_df.tail(days) if not hist_df.empty else hist_df
+                            hist_mvrv = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
+                            zscore = calculate_zscore(current_mvrv, hist_mvrv)
+                            
+                            st.metric(label, f"{zscore:.2f}" if zscore is not None else "—")
+                            st.caption(get_zscore_action(zscore))
 
             st.divider()
 
