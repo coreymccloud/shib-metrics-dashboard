@@ -33,7 +33,7 @@ REALIZED_CAP = 3_300_000_000
 
 PERIODS = [
     ("3 Days", 3),
-    ("5 Days", 5),
+    ("7 Days", 7),
     ("30 Days", 30),
     ("90 Days", 90),
     ("180 Days", 180),
@@ -64,46 +64,6 @@ def get_historical_data(days=365):
     except:
         return pd.DataFrame()
 
-def get_daily_burn():
-    """Improved robust scraper - tries multiple patterns"""
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-
-    # 1. Shibburn (Primary - most reliable right now)
-    try:
-        r = requests.get("https://www.shibburn.com/", headers=headers, timeout=15)
-        text = r.text
-
-        # Multiple fallback patterns for "Last 24 Hours"
-        patterns = [
-            r'Last 24 Hours[^0-9]*([\d,]+)',           # Original
-            r'Last 24 Hours.*?>?([\d,]+)',             # More flexible
-            r'24 Hours[^0-9]*([\d,]+)',                # Alternative label
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
-            if match:
-                val = int(match.group(1).replace(',', ''))
-                if 10_000 < val < 500_000_000:
-                    return val, "Shibburn"
-    except:
-        pass
-
-    # 2. Burnalytics fallback
-    try:
-        r = requests.get("https://www.burnalytics.com/asset/0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce", 
-                        headers=headers, timeout=15)
-        text = r.text
-        match = re.search(r'24H[^0-9]*([\d,]+)', text, re.IGNORECASE | re.DOTALL)
-        if match:
-            val = int(match.group(1).replace(',', ''))
-            if 10_000 < val < 500_000_000:
-                return val, "Burnalytics"
-    except:
-        pass
-
-    # Safe fallback
-    return 1_271_623, "Fallback"
 
 # ====================== CALCULATIONS ======================
 def calculate_mvrv(mcap):
