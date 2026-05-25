@@ -161,9 +161,9 @@ while True:
             # MVRV Z-Score Section with Typical Action
             st.subheader("MVRV Z-Score by Time Period")
             
-            zcol1, zcol2 = st.columns([5, 1])
+            zcol1, zcol2 = st.columns([3, 1])
             with zcol1:
-                zscore_cols = st.columns(4)
+                zscore_cols = st.columns(6)
                 for idx, (label, days) in enumerate(PERIODS.items()):
                     with zscore_cols[idx]:
                         period_df = hist_df.tail(days) if not hist_df.empty else hist_df
