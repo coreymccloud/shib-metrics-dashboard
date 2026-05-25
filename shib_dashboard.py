@@ -31,6 +31,7 @@ auto_refresh = st.toggle("🔄 Auto-refresh every 15 seconds", value=True)
 # ====================== CONSTANTS ======================
 REALIZED_CAP = 3_300_000_000
 
+# Added 1 Day and 5 Days
 PERIODS = {
     "1 Day": 1,
     "5 Days": 5,
@@ -92,7 +93,7 @@ def calculate_mvrv(mcap):
     return mcap / REALIZED_CAP if REALIZED_CAP > 0 else None
 
 def calculate_zscore(current_mvrv, hist_series):
-    if len(hist_series) < 10 or current_mvrv is None:
+    if len(hist_series) < 2 or current_mvrv is None:   # Need at least 2 points for std
         return None
     mean = np.mean(hist_series)
     std = np.std(hist_series)
@@ -100,17 +101,17 @@ def calculate_zscore(current_mvrv, hist_series):
 
 def get_zscore_action(zscore):
     if zscore is None:
-        return ""
+        return "Not enough data"
     if zscore > 2.0:
-        return "🔴 Extremely Overvalued, Strong Sell / Top Signal"
+        return "🔴 Strong Sell / Top Signal"
     elif zscore > 1.0:
-        return "🟡 Overvalued, Caution / Take Profits"
+        return "🟡 Take Profits"
     elif zscore < -1.5:
-        return "🟢 Extremely Undervalued, Strong Buy / Bottom Signal"
+        return "🟢 Strong Buy / Accumulate"
     elif zscore < -1.0:
-        return "🟢 Undervalued, Good Buy Zone"
+        return "🟢 Buy Zone"
     else:
-        return "⚪ Fair Value, Hold"
+        return "⚪ Hold / Neutral"
 
 def calculate_puell(daily_burn, price):
     daily_val = daily_burn * price
@@ -158,7 +159,7 @@ while True:
 
             st.divider()
 
-            # MVRV Z-Score Section with Typical Action
+            # MVRV Z-Score Section
             st.subheader("MVRV Z-Score by Time Period")
             
             zcol1, zcol2 = st.columns([3, 1])
@@ -177,9 +178,8 @@ while True:
             with zcol2:
                 with st.expander("What is MVRV Z-Score?", expanded=False):
                     st.markdown("""
-                    **Z-Score = (Current MVRV − Historical Avg) ÷ Std Dev**
-
-                    Shows **how extreme** the current valuation is vs history.
+                    **Z-Score = (Current MVRV − Historical Avg) ÷ Std Dev**  
+                    Shows how extreme today's valuation is vs history.
                     """)
 
             st.divider()
@@ -215,7 +215,7 @@ while True:
                     fig2.update_layout(height=380)
                     st.plotly_chart(fig2, use_container_width=True)
 
-            st.caption("Realized Cap from Glassnode • Higher Z-Score = More Extreme Valuation")
+            st.caption("Realized Cap from Glassnode • Very short periods (1d/5d) are more volatile")
 
     if not auto_refresh:
         break
