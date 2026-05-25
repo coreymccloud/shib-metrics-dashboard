@@ -1,11 +1,10 @@
 import streamlit as st
 import requests
 from datetime import datetime
-import re
 
-# Page config
+# ========================= CONFIG =========================
 st.set_page_config(
-    page_title="SHIB Burn Tracker",
+    page_title="SHIB Burn & Price Tracker",
     page_icon="🐕",
     layout="centered"
 )
@@ -14,65 +13,89 @@ st.set_page_config(
 st.markdown("""
     <script>
         function autoRefresh() {
-            setTimeout(function() {
-                window.location.reload();
-            }, 15000);
+            setTimeout(() => window.location.reload(), 15000);
         }
         window.onload = autoRefresh;
     </script>
 """, unsafe_allow_html=True)
 
 st.title("🐕 Shiba Inu (SHIB) Burn & Price Tracker")
-st.caption("🔄 Auto-refreshes every 15 seconds • All data from Shibburn.com")
+st.caption("🔄 Auto-refreshes every 15s • DexScreener + Etherscan")
 
-def fetch_shib_data():
+# ================== API KEYS (OPTIONAL) ==================
+# Get free Etherscan API key at: https://etherscan.io/apis
+ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "YourApiKeyToken")  # or hardcode your key
+
+# SHIB Contract
+SHIB_CONTRACT = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"
+
+# Main burn addresses
+BURN_ADDRESSES = [
+    "0x000000000000000000000000000000000000dead",
+    "0xdead000000000000000042069420694206942069"
+]
+
+def fetch_price_dexscreener():
     try:
-        headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
-        url = "https://www.shibburn.com/"
-        resp = requests.get(url, headers=headers, timeout=15)
-        resp.raise_for_status()
-        text = resp.text
-
-        # Extract Price
-        price_match = re.search(r'\$SHIB Price.*?\$\s*([\d.]+)', text, re.IGNORECASE | re.DOTALL)
-        price_str = price_match.group(1) if price_match else "0.00000554"
-        price = float(price_str)
-
-        # Extract Burn Stats
-        burned_match = re.search(r'Total Burned.*?([\d,]+)', text)
-        supply_match = re.search(r'Total Supply.*?([\d,]+)', text)
-        percent_match = re.search(r'Total Burned.*?(\d+\.\d+)%', text)
-
-        burned = int(burned_match.group(1).replace(',', '')) if burned_match else 410840050460498
-        total_supply = int(supply_match.group(1).replace(',', '')) if supply_match else 589159949539502
-        burn_percentage = float(percent_match.group(1)) if percent_match else 41.08
-
-        return {
-            "price": price,
-            "burn_percentage": burn_percentage,
-            "burned": burned,
-            "total_supply": total_supply,
-            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-        }
-    except Exception as e:
-        st.error(f"Error fetching data from Shibburn: {e}")
+        # Get token pairs on Ethereum
+        url = f"https://api.dexscreener.com/token-pairs/v1/ethereum/{SHIB_CONTRACT}"
+        resp = requests.get(url, timeout=10)
+        data = resp.json()
+        
+        if data and isinstance(data, list) and len(data) > 0:
+            # Take the pair with highest liquidity
+            best_pair = max(data, key=lambda x: x.get('liquidity', {}).get('usd', 0))
+            price = float(best_pair.get('priceUsd', 0))
+            return price
+        return None
+    except:
         return None
 
-data = fetch_shib_data()
+def fetch_supply_and_burn():
+    try:
+        base_url = "https://api.etherscan.io/api"
+        
+        # 1. Total Supply
+        supply_url = f"{base_url}?module=stats&action=tokensupply&contractaddress={SHIB_CONTRACT}&apikey={ETHERSCAN_API_KEY}"
+        supply_resp = requests.get(supply_url, timeout=10).json()
+        total_supply = int(supply_resp.get('result', 0))
+        
+        # 2. Burned tokens (sum balances in dead addresses)
+        burned = 0
+        for addr in BURN_ADDRESSES:
+            bal_url = f"{base_url}?module=account&action=tokenbalance&contractaddress={SHIB_CONTRACT}&address={addr}&tag=latest&apikey={ETHERSCAN_API_KEY}"
+            bal_resp = requests.get(bal_url, timeout=10).json()
+            burned += int(bal_resp.get('result', 0))
+        
+        initial_supply = 1_000_000_000_000_000
+        burn_percentage = (burned / initial_supply) * 100
+        
+        return {
+            "total_supply": total_supply,
+            "burned": burned,
+            "burn_percentage": burn_percentage
+        }
+    except Exception as e:
+        st.error(f"Etherscan error: {e}")
+        return None
 
-if data:
+# Fetch data
+price = fetch_price_dexscreener()
+supply_data = fetch_supply_and_burn()
+
+if price is not None and supply_data:
     col1, col2 = st.columns(2)
     
     with col1:
         st.metric(
             label="💰 Current SHIB Price (USD)",
-            value=f"${data['price']:.8f}"
+            value=f"${price:.8f}"
         )
     
     with col2:
         st.metric(
             label="🔥 Total Burn Percentage",
-            value=f"{data['burn_percentage']:.4f}%"
+            value=f"{supply_data['burn_percentage']:.4f}%"
         )
 
     st.divider()
@@ -80,17 +103,17 @@ if data:
     st.subheader("Supply & Burn Details")
     col_a, col_b, col_c = st.columns(3)
     with col_a:
-        st.metric("Total Supply", f"{data['total_supply']:,.0f}")
+        st.metric("Total Supply", f"{supply_data['total_supply']:,.0f}")
     with col_b:
-        st.metric("Tokens Burned", f"{data['burned']:,.0f}")
+        st.metric("Tokens Burned", f"{supply_data['burned']:,.0f}")
     with col_c:
-        st.metric("Remaining Supply", f"{data['total_supply'] - data['burned']:,.0f}")
+        st.metric("Remaining Supply", f"{supply_data['total_supply'] - supply_data['burned']:,.0f}")
 
-    st.success(f"✅ Last updated: {data['timestamp']}")
-    st.caption("All data scraped from Shibburn.com (powered by Burnalytics)")
+    st.success(f"✅ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    st.caption("Price: DexScreener • Supply/Burn: Etherscan (on-chain)")
 
 else:
-    st.error("Could not load data. Please check your internet connection.")
+    st.error("Failed to fetch data. Please try again later.")
 
 st.markdown("---")
-st.caption("Initial Supply: 1,000,000,000,000,000 SHIB")
+st.caption("Initial Supply: 1 Quadrillion SHIB")
