@@ -65,7 +65,6 @@ def fetch_supply_and_burn():
         burn_percentage = (burned / initial_supply) * 100 if initial_supply > 0 else 0
         
         return {
-            "burned": burned,
             "burn_percentage": burn_percentage
         }
     except Exception as e:
@@ -93,16 +92,7 @@ if price is not None and supply_data:
 
     st.divider()
 
-    st.subheader("Burn Details")
-    col_a, = st.columns(1)
-    with col_a:
-        st.metric("Tokens Burned", f"{supply_data['burned']:,.4f}")
-
-    st.success(f"✅ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    st.caption("Price: DexScreener • Supply & Burn: Etherscan API V2 (on-chain)")
-
 else:
     st.error("Failed to fetch data. Make sure your Etherscan API key is correct.")
 
 st.markdown("---")
-st.caption("Initial Supply: 1,000,000,000,000,000 SHIB")
