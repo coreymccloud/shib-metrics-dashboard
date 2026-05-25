@@ -92,8 +92,8 @@ while True:
             mcap = current['market_cap']
             cur_mvrv = mvrv(mcap)
 
-            # Price changed to 8 decimal places
-            st.metric("Price", f"${price:.8f}")
+            # Very compact top
+            st.metric("Price", f"${price:.10f}")
 
             st.divider()
 
@@ -107,7 +107,7 @@ while True:
 
             st.divider()
 
-            # Z-Scores
+            # Z-Scores - Compact 2-column layout
             st.subheader("Z-Score")
             for i in range(0, len(PERIODS), 2):
                 cols = st.columns(2)
@@ -123,7 +123,7 @@ while True:
 
             st.divider()
 
-            # Charts
+            # Compact Charts
             st.subheader("Charts")
             tab1, tab2 = st.tabs(["Market Cap", "Price"])
 
