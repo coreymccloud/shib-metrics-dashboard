@@ -1,11 +1,9 @@
-
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
 import pandas as pd
 import numpy as np
 import plotly.graph_objects as go
-from datetime import datetime
 import time
 import re
 
@@ -14,7 +12,7 @@ st.set_page_config(
     page_title="SHIB Live Metrics",
     layout="centered",
     initial_sidebar_state="collapsed",
-    menu_items={"About": "SHiba Inu MVRV + Z-Score + Puell Dashboard"}
+    menu_items={"About": "Shiba Inu MVRV + Z-Score + Puell Dashboard"}
 )
 
 st.html("""
@@ -28,7 +26,7 @@ st.html("""
 """)
 
 st.title("🚀 SHIB Live Metrics")
-st.caption("MVRV • MVRV Z-Score • Adapted Puell Multiple | Accurate Burn Scraper")
+st.caption("MVRV • MVRV Z-Score • Adapted Puell | Burnalytics + Shibburn")
 
 auto_refresh = st.toggle("🔄 Auto-refresh every 15 seconds", value=True)
 
@@ -40,7 +38,6 @@ def get_shib_current():
         return {
             'price': data['market_data']['current_price']['usd'],
             'market_cap': data['market_data']['market_cap']['usd'],
-            'updated': data['last_updated']
         }
     except:
         return None
@@ -57,25 +54,50 @@ def get_historical_data(days=180):
     except:
         return pd.DataFrame()
 
-def scrape_daily_burn():
-    """Improved & reliable scraper for Last 24 Hours SHIB burn"""
+def scrape_burnalytics_burn():
+    """Primary: Burnalytics (more reliable)"""
+    try:
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        # SHIB page on Burnalytics
+        response = requests.get("https://www.burnalytics.com/asset/0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce", 
+                              headers=headers, timeout=12)
+        text = response.text
+
+        # Look for 24h burn (often near "24H" or in stats)
+        match = re.search(r'24H[^0-9]*([\d,]+)', text, re.IGNORECASE | re.DOTALL)
+        if match:
+            burn_str = match.group(1).replace(',', '')
+            daily = int(burn_str)
+            if 10_000 < daily < 500_000_000:
+                return daily
+    except:
+        pass
+    return None
+
+def scrape_shibburn_burn():
+    """Fallback: Shibburn"""
     try:
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
         response = requests.get("https://www.shibburn.com/", headers=headers, timeout=12)
         text = response.text
 
-        # Precise regex: Find number right after "Last 24 Hours"
         match = re.search(r'Last 24 Hours[^0-9]*([\d,]+)', text, re.IGNORECASE | re.DOTALL)
         if match:
             burn_str = match.group(1).replace(',', '')
             daily = int(burn_str)
-            if 10_000 < daily < 500_000_000:   # Realistic daily burn range
+            if 10_000 < daily < 500_000_000:
                 return daily
     except:
         pass
+    return 1_271_623  # safe fallback
 
-    # Safe fallback (current real value as of May 2026)
-    return 1_271_623
+def get_daily_burn():
+    """Try Burnalytics first, then Shibburn"""
+    burn = scrape_burnalytics_burn()
+    if burn:
+        return burn, "Burnalytics"
+    burn = scrape_shibburn_burn()
+    return burn, "Shibburn"
 
 # ====================== CALCULATIONS ======================
 def calculate_mvrv(mcap, realized=2_900_000_000):
@@ -91,14 +113,14 @@ def calculate_puell(daily_burn, price):
     ma_val = daily_burn * 2.1 * price
     return daily_val / ma_val if ma_val > 0 else None
 
-# ====================== MAIN DASHBOARD LOOP ======================
+# ====================== MAIN DASHBOARD ======================
 placeholder = st.empty()
 
 while True:
     with placeholder.container():
         current = get_shib_current()
         hist_df = get_historical_data()
-        daily_burn = scrape_daily_burn()
+        daily_burn, source = get_daily_burn()
 
         if not current:
             st.error("⚠️ Unable to fetch data. Retrying soon...")
@@ -115,19 +137,13 @@ while True:
             with col1:
                 st.metric("Price", f"${price:.10f}")
             with col2:
-                st.metric("Market Cap", f"${mcap:,.0f}")
-
-            col3, col4 = st.columns(2)
-            with col3:
-                st.metric("24h Burn", f"{daily_burn:,.0f} SHIB")
-            with col4:
-                st.metric("Updated", current['updated'][:16])
+                st.metric("24h Burn", f"{daily_burn:,.0f} SHIB", delta=f"via {source}")
 
             st.divider()
 
             # Key Indicators
             st.subheader("Key Indicators")
-            c1, c2, c3 = st.columns(1) if "mobile" in st.user else st.columns(3)
+            c1, c2, c3 = st.columns(3)
 
             with c1:
                 st.metric("📈 MVRV Ratio", f"{mvrv:.2f}" if mvrv else "—")
@@ -152,7 +168,7 @@ while True:
                     elif puell > 1.0: st.info("🟡 Above Average")
                     else: st.warning("⚠️ Low Burn Activity")
 
-            # Charts
+            # Charts (unchanged)
             st.subheader("Historical Charts")
             tab1, tab2 = st.tabs(["Market Cap", "Price History"])
 
@@ -173,7 +189,7 @@ while True:
                     fig2.update_layout(height=380, margin=dict(l=10, r=10, t=40, b=10))
                     st.plotly_chart(fig2, use_container_width=True)
 
-            st.caption(f"Last refreshed: {datetime.now().strftime('%H:%M:%S')} • Realized Cap is estimated")
+            st.caption("Realized Cap is an estimate • Powered by Burnalytics + Shibburn")
 
     if not auto_refresh:
         break
@@ -181,6 +197,6 @@ while True:
     time.sleep(15)
     st.rerun()
 
-# Manual refresh button
+# Manual refresh
 if st.button("🔄 Refresh Now", use_container_width=True, type="primary"):
     st.rerun()
