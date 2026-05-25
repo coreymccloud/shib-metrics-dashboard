@@ -34,7 +34,7 @@ auto_refresh = st.toggle("🔄 Auto-refresh every 15s", value=True)
 REALIZED_CAP = 3_300_000_000
 
 PERIODS = [
-    ("3 Days", 3), ("5 Days", 5), ("30 Days", 30),
+    ("3 Days", 3), ("7 Days", 7), ("30 Days", 30),
     ("90 Days", 90), ("180 Days", 180), ("365 Days", 365)
 ]
 
@@ -96,7 +96,7 @@ while True:
             mcap = current['market_cap']
             current_mvrv = calculate_mvrv(mcap)
 
-            st.metric("**Current Price**", f"${price:.10f}")
+            st.metric("**Current Price**", f"${price:.8f}")
 
             st.divider()
 
