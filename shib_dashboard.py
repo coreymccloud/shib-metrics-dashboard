@@ -102,7 +102,6 @@ while True:
     with placeholder.container():
         current = get_shib_current()
         hist_df = get_historical_data(days=365)
-        daily_burn, source = get_daily_burn()
 
         if not current:
             st.error("⚠️ Unable to fetch data. Retrying soon...")
