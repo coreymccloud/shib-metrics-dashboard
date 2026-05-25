@@ -31,15 +31,15 @@ auto_refresh = st.toggle("🔄 Auto-refresh every 15 seconds", value=True)
 # ====================== CONSTANTS ======================
 REALIZED_CAP = 3_300_000_000
 
-# Changed 1 Day → 3 Days
-PERIODS = {
-    "3 Days": 3,
-    "5 Days": 5,
-    "30 Days": 30,
-    "90 Days": 90,
-    "180 Days": 180,
-    "365 Days": 365
-}
+# Time periods in ASCENDING order
+PERIODS = [
+    ("3 Days", 3),
+    ("5 Days", 5),
+    ("30 Days", 30),
+    ("90 Days", 90),
+    ("180 Days", 180),
+    ("365 Days", 365)
+]
 
 # ====================== DATA FETCHING ======================
 @st.cache_data(ttl=60)
@@ -149,78 +149,4 @@ while True:
             with mcol1:
                 st.metric("MVRV Ratio", f"{current_mvrv:.2f}" if current_mvrv else "—")
             with mcol2:
-                with st.expander("What is MVRV?", expanded=False):
-                    st.markdown("""
-                    **MVRV = Market Cap ÷ Realized Cap**  
-                    - Market Cap: Current price × supply  
-                    - Realized Cap: Value at last on-chain movement  
-                    **Guide**: >2.5 Overvalued | 0.8-1.2 Fair | <0.8 Undervalued
-                    """)
-
-            st.divider()
-
-            # MVRV Z-Score Section
-            st.subheader("MVRV Z-Score by Time Period")
-            
-            zcol1, zcol2 = st.columns([3, 1])
-            with zcol1:
-                zscore_cols = st.columns(3)
-                for idx, (label, days) in enumerate(PERIODS.items()):
-                    with zscore_cols[idx % 3]:
-                        period_df = hist_df.tail(days) if not hist_df.empty else hist_df
-                        hist_mvrv = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
-                        zscore = calculate_zscore(current_mvrv, hist_mvrv)
-                        
-                        st.metric(label, f"{zscore:.2f}" if zscore is not None else "—")
-                        st.caption(get_zscore_action(zscore))
-
-            with zcol2:
-                with st.expander("What is MVRV Z-Score?", expanded=False):
-                    st.markdown("""
-                    **Z-Score = (Current MVRV − Historical Avg) ÷ Std Dev**  
-                    Shows how extreme today's valuation is vs history.
-                    """)
-
-            st.divider()
-
-            # Puell
-            puell = calculate_puell(daily_burn, price)
-            st.subheader("🔥 Adapted Puell Multiple")
-            st.metric("Puell", f"{puell:.2f}" if puell else "—")
-            if puell:
-                if puell > 1.8: st.success("High Burn Pressure → Bullish")
-                elif puell > 1.0: st.info("Above Average")
-                else: st.warning("Low Burn Activity")
-
-            # Charts
-            st.subheader("Historical Charts")
-            tab1, tab2 = st.tabs(["Market Cap vs Realized", "Price History"])
-
-            with tab1:
-                if not hist_df.empty:
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['market_cap']/1e9,
-                                           name="Market Cap ($B)", line=dict(color="#1E88E5", width=2.5)))
-                    fig.add_hline(y=REALIZED_CAP/1e9, line_dash="dash", line_color="red",
-                                 annotation_text=f"Realized ≈ ${REALIZED_CAP/1e9:.1f}B")
-                    fig.update_layout(height=380)
-                    st.plotly_chart(fig, use_container_width=True)
-
-            with tab2:
-                if not hist_df.empty:
-                    fig2 = go.Figure()
-                    fig2.add_trace(go.Scatter(x=hist_df.index, y=hist_df['price'],
-                                            name="Price (USD)", line=dict(color="#FF9800", width=2.5)))
-                    fig2.update_layout(height=380)
-                    st.plotly_chart(fig2, use_container_width=True)
-
-            st.caption("Realized Cap from Glassnode")
-
-    if not auto_refresh:
-        break
-
-    time.sleep(15)
-    st.rerun()
-
-if st.button("🔄 Refresh Now", use_container_width=True, type="primary"):
-    st.rerun()
+                with st.expander("What is M
