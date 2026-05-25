@@ -1,88 +1,181 @@
 import streamlit as st
 import requests
-from bs4 import BeautifulSoup
-from datetime import datetime
+import pandas as pd
+import numpy as np
+import plotly.graph_objects as go
 import time
 
-st.set_page_config(page_title="🔥 SHIB Burn Dashboard", layout="centered")
+# ====================== MOBILE OPTIMIZATIONS ======================
+st.set_page_config(
+    page_title="SHIB Live Metrics",
+    layout="centered",
+    initial_sidebar_state="collapsed"
+)
 
-st.title("🔥 SHIBA INU 24H BURN DASHBOARD")
-st.markdown("**Live data from Shibburn • Powered by community trackers**")
+st.html("""
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+    <style>
+        .stMetric { font-size: 1.15rem !important; }
+        .stMarkdown h1 { font-size: 1.85rem !important; }
+        button { min-height: 52px !important; }
+    </style>
+""")
 
-# Sidebar
-st.sidebar.header("Settings")
-refresh_interval = st.sidebar.slider("Auto-refresh (seconds)", 30, 300, 60)
-show_details = st.sidebar.checkbox("Show latest burns", value=True)
+st.title("🚀 SHIB Live Metrics")
+st.caption("MVRV • Multi-Period Z-Score | Glassnode Realized Cap")
 
-@st.cache_data(ttl=60)  # Cache for 60 seconds
-def fetch_shibburn_data():
+auto_refresh = st.toggle("🔄 Auto-refresh every 15 seconds", value=True)
+
+# ====================== CONSTANTS ======================
+REALIZED_CAP = 3_300_000_000
+
+PERIODS = [
+    ("3 Days", 3),
+    ("5 Days", 5),
+    ("30 Days", 30),
+    ("90 Days", 90),
+    ("180 Days", 180),
+    ("365 Days", 365)
+]
+
+# ====================== DATA FETCHING ======================
+@st.cache_data(ttl=60)
+def get_shib_current():
     try:
-        headers = {"User-Agent": "SHIB-Dashboard/1.0"}
-        resp = requests.get("https://www.shibburn.com/", headers=headers, timeout=10)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, 'html.parser')
-        
-        # Extract 24h burn
-        burn_text = None
-        for elem in soup.find_all(['div', 'span', 'p', 'h']):
-            if 'Last 24 Hours' in elem.get_text() or '24h' in elem.get_text().lower():
-                parent = elem.parent
-                if parent:
-                    numbers = [t for t in parent.get_text().split() if t.replace(',', '').replace('.', '').isdigit()]
-                    if numbers:
-                        burn_text = numbers[0]
-                        break
-        
-        # Fallback regex search
-        import re
-        match = re.search(r'Last 24 Hours.*?([\d,]+)', resp.text, re.IGNORECASE | re.DOTALL)
-        if match and not burn_text:
-            burn_text = match.group(1)
-        
-        burn_24h = int(burn_text.replace(',', '')) if burn_text else None
-        
-        # Price from CoinGecko
-        price_resp = requests.get(
-            "https://api.coingecko.com/api/v3/simple/price?ids=shiba-inu&vs_currencies=usd",
-            timeout=10
-        )
-        price = price_resp.json().get("shiba-inu", {}).get("usd")
-        
-        return burn_24h, price
-    except Exception as e:
-        st.error(f"Fetch error: {e}")
-        return None, None
+        data = requests.get("https://api.coingecko.com/api/v3/coins/shiba-inu", timeout=10).json()
+        return {
+            'price': data['market_data']['current_price']['usd'],
+            'market_cap': data['market_data']['market_cap']['usd'],
+        }
+    except:
+        return None
 
-# Main display
-burn_24h, price = fetch_shibburn_data()
+@st.cache_data(ttl=3600)
+def get_historical_data(days=365):
+    try:
+        url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days={days}&interval=daily"
+        data = requests.get(url, timeout=20).json()
+        return pd.DataFrame({
+            'market_cap': [item[1] for item in data.get('market_caps', [])],
+            'price': [item[1] for item in data.get('prices', [])]
+        })
+    except:
+        return pd.DataFrame()
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("24H Burned", f"{burn_24h:,} SHIB" if burn_24h else "N/A")
-with col2:
-    usd_value = burn_24h * price if burn_24h and price else None
-    st.metric("USD Value", f"${usd_value:,.2f}" if usd_value else "N/A")
-with col3:
-    st.metric("SHIB Price", f"${price:.8f}" if price else "N/A")
+# ====================== CALCULATIONS ======================
+def calculate_mvrv(mcap):
+    return mcap / REALIZED_CAP if REALIZED_CAP > 0 else None
 
-# Progress / Impact
-if burn_24h:
-    circulating = 585_000_000_000_000  # Approx
-    impact = (burn_24h / circulating) * 100
-    st.progress(impact / 0.01, text=f"Supply Impact: {impact:.6f}%")
+def calculate_zscore(current_mvrv, hist_series):
+    if len(hist_series) < 2 or current_mvrv is None:
+        return None
+    mean = np.mean(hist_series)
+    std = np.std(hist_series)
+    return (current_mvrv - mean) / std if std > 0 else None
 
-st.caption(f"Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
+def get_zscore_action(zscore):
+    if zscore is None:
+        return "Not enough data"
+    if zscore > 2.0:
+        return "🔴 Strong Sell / Top Signal"
+    elif zscore > 1.0:
+        return "🟡 Take Profits"
+    elif zscore < -1.5:
+        return "🟢 Strong Buy / Accumulate"
+    elif zscore < -1.0:
+        return "🟢 Buy Zone"
+    else:
+        return "⚪ Hold / Neutral"
 
-if show_details:
-    st.subheader("Latest Burns (from Shibburn)")
-    st.info("Check https://www.shibburn.com/burns for full live list")
+# ====================== MAIN DASHBOARD ======================
+placeholder = st.empty()
 
-# Auto-refresh
-if st.button("🔄 Refresh Now"):
+while True:
+    with placeholder.container():
+        current = get_shib_current()
+        hist_df = get_historical_data(days=365)
+
+        if not current:
+            st.error("⚠️ Unable to fetch data. Retrying soon...")
+        else:
+            price = current['price']
+            mcap = current['market_cap']
+            current_mvrv = calculate_mvrv(mcap)
+
+            # Top Row (Burn removed)
+            st.metric("Price", f"${price:.10f}")
+
+            st.divider()
+
+            # Current MVRV
+            st.subheader("Current MVRV")
+            mcol1, mcol2 = st.columns([2, 1])
+            with mcol1:
+                st.metric("MVRV Ratio", f"{current_mvrv:.2f}" if current_mvrv else "—")
+            with mcol2:
+                with st.expander("What is MVRV?", expanded=False):
+                    st.markdown("""
+                    **MVRV = Market Cap ÷ Realized Cap**  
+                    - Market Cap: Current price × supply  
+                    - Realized Cap: Value at last on-chain movement  
+                    **Guide**: >2.5 Overvalued | 0.8-1.2 Fair | <0.8 Undervalued
+                    """)
+
+            st.divider()
+
+            # MVRV Z-Score Section
+            st.subheader("MVRV Z-Score by Time Period")
+            
+            zcol1, zcol2 = st.columns([3, 1])
+            with zcol1:
+                zscore_cols = st.columns(3)
+                for idx, (label, days) in enumerate(PERIODS):
+                    with zscore_cols[idx % 3]:
+                        period_df = hist_df.tail(days) if not hist_df.empty else hist_df
+                        hist_mvrv = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
+                        zscore = calculate_zscore(current_mvrv, hist_mvrv)
+                        
+                        st.metric(label, f"{zscore:.2f}" if zscore is not None else "—")
+                        st.caption(get_zscore_action(zscore))
+
+            with zcol2:
+                with st.expander("What is MVRV Z-Score?", expanded=False):
+                    st.markdown("""
+                    **Z-Score = (Current MVRV − Historical Avg) ÷ Std Dev**  
+                    Shows how extreme today's valuation is vs history.
+                    """)
+
+            st.divider()
+
+            # Charts
+            st.subheader("Historical Charts")
+            tab1, tab2 = st.tabs(["Market Cap vs Realized", "Price History"])
+
+            with tab1:
+                if not hist_df.empty:
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['market_cap']/1e9,
+                                           name="Market Cap ($B)", line=dict(color="#1E88E5", width=2.5)))
+                    fig.add_hline(y=REALIZED_CAP/1e9, line_dash="dash", line_color="red",
+                                 annotation_text=f"Realized ≈ ${REALIZED_CAP/1e9:.1f}B")
+                    fig.update_layout(height=380)
+                    st.plotly_chart(fig, use_container_width=True)
+
+            with tab2:
+                if not hist_df.empty:
+                    fig2 = go.Figure()
+                    fig2.add_trace(go.Scatter(x=hist_df.index, y=hist_df['price'],
+                                            name="Price (USD)", line=dict(color="#FF9800", width=2.5)))
+                    fig2.update_layout(height=380)
+                    st.plotly_chart(fig2, use_container_width=True)
+
+            st.caption("Realized Cap from Glassnode")
+
+    if not auto_refresh:
+        break
+
+    time.sleep(15)
     st.rerun()
 
-st.caption("💡 Pro tip: Deploy free on Streamlit Cloud. For production use Burnalytics API (requires key).")
-
-# Footer
-st.markdown("---")
-st.markdown("[Shibburn.com](https://www.shibburn.com/) • [Burnalytics](https://www.burnalytics.com/) • Data is on-chain aggregated")
+if st.button("🔄 Refresh Now", use_container_width=True, type="primary"):
+    st.rerun()
