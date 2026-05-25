@@ -1,108 +1,88 @@
+import streamlit as st
 import requests
+from bs4 import BeautifulSoup
+from datetime import datetime
 import time
-from datetime import datetime, timedelta
-import os
 
-# ============== CONFIG ==============
-ETHERSCAN_API_KEY = os.getenv("ETHERSCAN_API_KEY", "YourFreeEtherscanAPIKeyHere")  # Get free at https://etherscan.io/apis
-COINGECKO_API = "https://api.coingecko.com/api/v3/simple/price"
+st.set_page_config(page_title="🔥 SHIB Burn Dashboard", layout="centered")
 
-SHIB_CONTRACT = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"
-# Main burn addresses (dead / null)
-BURN_ADDRESSES = [
-    "0xdead000000000000000042069420694206942069",
-    "0x000000000000000000000000000000000000dead",
-    # Add more if needed from Shibburn
-]
+st.title("🔥 SHIBA INU 24H BURN DASHBOARD")
+st.markdown("**Live data from Shibburn • Powered by community trackers**")
 
-# =====================================
+# Sidebar
+st.sidebar.header("Settings")
+refresh_interval = st.sidebar.slider("Auto-refresh (seconds)", 30, 300, 60)
+show_details = st.sidebar.checkbox("Show latest burns", value=True)
 
-def get_current_shib_price():
-    """Live SHIB price in USD via CoinGecko (free, no key)"""
+@st.cache_data(ttl=60)  # Cache for 60 seconds
+def fetch_shibburn_data():
     try:
-        resp = requests.get(
-            COINGECKO_API,
-            params={"ids": "shiba-inu", "vs_currencies": "usd"},
+        headers = {"User-Agent": "SHIB-Dashboard/1.0"}
+        resp = requests.get("https://www.shibburn.com/", headers=headers, timeout=10)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        
+        # Extract 24h burn
+        burn_text = None
+        for elem in soup.find_all(['div', 'span', 'p', 'h']):
+            if 'Last 24 Hours' in elem.get_text() or '24h' in elem.get_text().lower():
+                parent = elem.parent
+                if parent:
+                    numbers = [t for t in parent.get_text().split() if t.replace(',', '').replace('.', '').isdigit()]
+                    if numbers:
+                        burn_text = numbers[0]
+                        break
+        
+        # Fallback regex search
+        import re
+        match = re.search(r'Last 24 Hours.*?([\d,]+)', resp.text, re.IGNORECASE | re.DOTALL)
+        if match and not burn_text:
+            burn_text = match.group(1)
+        
+        burn_24h = int(burn_text.replace(',', '')) if burn_text else None
+        
+        # Price from CoinGecko
+        price_resp = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price?ids=shiba-inu&vs_currencies=usd",
             timeout=10
         )
-        resp.raise_for_status()
-        data = resp.json()
-        return data["shiba-inu"]["usd"]
-    except Exception as e:
-        print(f"⚠️ Price fetch failed: {e}")
-        return None
-
-def get_24h_burn_amount():
-    """
-    Fetch SHIB transfers to burn addresses in the last ~24 hours using Etherscan.
-    Note: Etherscan free tier has rate limits (~5 calls/sec, 100k results/day).
-    """
-    total_burned = 0
-    one_day_ago = int((datetime.utcnow() - timedelta(days=1)).timestamp())
-    
-    for burn_addr in BURN_ADDRESSES:
-        try:
-            url = (
-                f"https://api.etherscan.io/api"
-                f"?module=account"
-                f"&action=tokentx"
-                f"&contractaddress={SHIB_CONTRACT}"
-                f"&address={burn_addr}"
-                f"&startblock=0"
-                f"&endblock=99999999"
-                f"&sort=desc"
-                f"&apikey={ETHERSCAN_API_KEY}"
-            )
-            resp = requests.get(url, timeout=15)
-            resp.raise_for_status()
-            data = resp.json()
-            
-            if data["status"] != "1" or not data.get("result"):
-                continue
-                
-            for tx in data["result"]:
-                # Filter by time (timestamp in Unix seconds)
-                if int(tx["timeStamp"]) < one_day_ago:
-                    break  # Since sorted desc, we can stop early
-                
-                # Value is in smallest unit (18 decimals for SHIB)
-                value = int(tx["value"]) / 10**18
-                total_burned += value
-                
-        except Exception as e:
-            print(f"Error querying burn address {burn_addr}: {e}")
-    
-    return int(total_burned)  # Return whole tokens
-
-def display_live_burn_info():
-    print("=" * 70)
-    print("🔥 SHIBA INU (SHIB) 24-HOUR BURN TRACKER - LIVE")
-    print("=" * 70)
-    print(f"Updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}\n")
-    
-    price = get_current_shib_price()
-    burn_amount = get_24h_burn_amount()
-    
-    if burn_amount is not None:
-        print(f"24-Hour Tokens Burned : {burn_amount:,} SHIB")
+        price = price_resp.json().get("shiba-inu", {}).get("usd")
         
-        if price:
-            usd_value = burn_amount * price
-            print(f"Approximate USD Value  : ${usd_value:,.2f} (@ ${price:.8f})")
-        else:
-            print("USD Value: (price fetch unavailable)")
-    else:
-        print("❌ Failed to fetch burn data")
-    
-    print("\n💡 Note: This sums transfers to known dead addresses.")
-    print("   For more precision, consider Burnalytics paid API.")
-    print("\nLive Tracker: https://www.shibburn.com/")
-    print("=" * 70)
+        return burn_24h, price
+    except Exception as e:
+        st.error(f"Fetch error: {e}")
+        return None, None
 
-if __name__ == "__main__":
-    display_live_burn_info()
-    
-    # Optional: Refresh every hour
-    # while True:
-    #     display_live_burn_info()
-    #     time.sleep(3600)
+# Main display
+burn_24h, price = fetch_shibburn_data()
+
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("24H Burned", f"{burn_24h:,} SHIB" if burn_24h else "N/A")
+with col2:
+    usd_value = burn_24h * price if burn_24h and price else None
+    st.metric("USD Value", f"${usd_value:,.2f}" if usd_value else "N/A")
+with col3:
+    st.metric("SHIB Price", f"${price:.8f}" if price else "N/A")
+
+# Progress / Impact
+if burn_24h:
+    circulating = 585_000_000_000_000  # Approx
+    impact = (burn_24h / circulating) * 100
+    st.progress(impact / 0.01, text=f"Supply Impact: {impact:.6f}%")
+
+st.caption(f"Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
+
+if show_details:
+    st.subheader("Latest Burns (from Shibburn)")
+    st.info("Check https://www.shibburn.com/burns for full live list")
+
+# Auto-refresh
+if st.button("🔄 Refresh Now"):
+    st.rerun()
+
+st.caption("💡 Pro tip: Deploy free on Streamlit Cloud. For production use Burnalytics API (requires key).")
+
+# Footer
+st.markdown("---")
+st.markdown("[Shibburn.com](https://www.shibburn.com/) • [Burnalytics](https://www.burnalytics.com/) • Data is on-chain aggregated")
