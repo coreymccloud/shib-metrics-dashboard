@@ -1,4 +1,3 @@
-
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
@@ -12,8 +11,7 @@ import re
 st.set_page_config(
     page_title="SHIB Live Metrics",
     layout="centered",
-    initial_sidebar_state="collapsed",
-    menu_items={"About": "Shiba Inu MVRV + Z-Score + Puell Dashboard"}
+    initial_sidebar_state="collapsed"
 )
 
 st.html("""
@@ -26,9 +24,19 @@ st.html("""
 """)
 
 st.title("🚀 SHIB Live Metrics")
-st.caption("MVRV • MVRV Z-Score • Adapted Puell | Burnalytics + Glassnode Realized Cap")
+st.caption("MVRV • Multi-Period Z-Score • Adapted Puell | Burnalytics + Glassnode")
 
 auto_refresh = st.toggle("🔄 Auto-refresh every 15 seconds", value=True)
+
+# ====================== CONSTANTS ======================
+REALIZED_CAP = 3_300_000_000  # Updated Glassnode-based Realized Cap (May 2026)
+
+PERIODS = {
+    "30 Days": 30,
+    "90 Days": 90,
+    "180 Days": 180,
+    "365 Days": 365
+}
 
 # ====================== DATA FETCHING ======================
 @st.cache_data(ttl=60)
@@ -38,16 +46,15 @@ def get_shib_current():
         return {
             'price': data['market_data']['current_price']['usd'],
             'market_cap': data['market_data']['market_cap']['usd'],
-            'circulating': data['market_data']['circulating_supply']
         }
     except:
         return None
 
-@st.cache_data(ttl=1800)
-def get_historical_data(days=180):
+@st.cache_data(ttl=3600)
+def get_historical_data(days=365):
     try:
         url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days={days}&interval=daily"
-        data = requests.get(url, timeout=15).json()
+        data = requests.get(url, timeout=20).json()
         return pd.DataFrame({
             'market_cap': [item[1] for item in data.get('market_caps', [])],
             'price': [item[1] for item in data.get('prices', [])]
@@ -57,12 +64,12 @@ def get_historical_data(days=180):
 
 def get_daily_burn():
     """Burnalytics primary + Shibburn fallback"""
+    headers = {'User-Agent': 'Mozilla/5.0'}
+    # Burnalytics
     try:
-        headers = {'User-Agent': 'Mozilla/5.0'}
         r = requests.get("https://www.burnalytics.com/asset/0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce", 
                         headers=headers, timeout=12)
-        text = r.text
-        match = re.search(r'24H[^0-9]*([\d,]+)', text, re.IGNORECASE | re.DOTALL)
+        match = re.search(r'24H[^0-9]*([\d,]+)', r.text, re.IGNORECASE | re.DOTALL)
         if match:
             val = int(match.group(1).replace(',', ''))
             if 10_000 < val < 500_000_000:
@@ -81,17 +88,16 @@ def get_daily_burn():
         pass
     return 1_271_623, "Fallback"
 
-# ====================== REALIZED CAP (Glassnode-based) ======================
-# Updated May 2026 - Realized Price ~$0.00000561 → Realized Cap ~$3.30B
-REALIZED_CAP = 3_300_000_000   # More accurate on-chain value
-
+# ====================== CALCULATIONS ======================
 def calculate_mvrv(mcap):
     return mcap / REALIZED_CAP if REALIZED_CAP > 0 else None
 
 def calculate_zscore(current_mvrv, hist_series):
-    if len(hist_series) < 20 or current_mvrv is None:
+    if len(hist_series) < 10 or current_mvrv is None:
         return None
-    return (current_mvrv - np.mean(hist_series)) / np.std(hist_series)
+    mean = np.mean(hist_series)
+    std = np.std(hist_series)
+    return (current_mvrv - mean) / std if std > 0 else None
 
 def calculate_puell(daily_burn, price):
     daily_val = daily_burn * price
@@ -104,7 +110,7 @@ placeholder = st.empty()
 while True:
     with placeholder.container():
         current = get_shib_current()
-        hist_df = get_historical_data()
+        hist_df = get_historical_data(days=365)
         daily_burn, source = get_daily_burn()
 
         if not current:
@@ -112,12 +118,9 @@ while True:
         else:
             price = current['price']
             mcap = current['market_cap']
-            mvrv = calculate_mvrv(mcap)
-            hist_mvrv = (hist_df['market_cap'] / REALIZED_CAP).tolist() if not hist_df.empty else []
-            zscore = calculate_zscore(mvrv, hist_mvrv)
-            puell = calculate_puell(daily_burn, price)
+            current_mvrv = calculate_mvrv(mcap)
 
-            # Top Metrics
+            # Top Row
             col1, col2 = st.columns(2)
             with col1:
                 st.metric("Price", f"${price:.10f}")
@@ -126,32 +129,49 @@ while True:
 
             st.divider()
 
-            # Key Indicators
-            st.subheader("Key Indicators")
-            c1, c2, c3 = st.columns(3)
+            # Current MVRV
+            st.subheader("Current MVRV")
+            st.metric("MVRV Ratio", f"{current_mvrv:.2f}" if current_mvrv else "—")
 
-            with c1:
-                st.metric("📈 MVRV Ratio", f"{mvrv:.2f}" if mvrv else "—")
-                if mvrv:
-                    if mvrv > 2.5: st.error("🔴 Significantly Overvalued")
-                    elif mvrv > 1.2: st.warning("🟡 In Profit Zone")
-                    elif mvrv < 0.8: st.success("🟢 Potentially Undervalued")
-                    else: st.info("⚪ Fair Value")
+            st.divider()
 
-            with c2:
-                st.metric("📉 MVRV Z-Score", f"{zscore:.2f}" if zscore else "—")
-                if zscore:
-                    if zscore > 2.0: st.error("🔴 Extreme Overvalued")
-                    elif zscore > 1.0: st.warning("🟡 Overvalued")
-                    elif zscore < -1.5: st.success("🟢 Strong Buy Zone")
-                    else: st.info("⚪ Neutral")
+            # === Multi-Period MVRV Z-Scores ===
+            st.subheader("MVRV Z-Score by Time Period")
+            zscore_cols = st.columns(4)
 
-            with c3:
-                st.metric("🔥 Adapted Puell", f"{puell:.2f}" if puell else "—")
-                if puell:
-                    if puell > 1.8: st.success("🔥 High Burn Pressure → Bullish")
-                    elif puell > 1.0: st.info("🟡 Above Average")
-                    else: st.warning("⚠️ Low Burn Activity")
+            for idx, (label, days) in enumerate(PERIODS.items()):
+                with zscore_cols[idx]:
+                    # Use last N days of data
+                    period_df = hist_df.tail(days) if not hist_df.empty else hist_df
+                    hist_mvrv = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
+                    
+                    zscore = calculate_zscore(current_mvrv, hist_mvrv)
+                    
+                    st.metric(label, f"{zscore:.2f}" if zscore is not None else "—")
+                    
+                    if zscore is not None:
+                        if zscore > 2.0:
+                            st.error("🔴 Extreme Overvalued")
+                        elif zscore > 1.0:
+                            st.warning("🟡 Overvalued")
+                        elif zscore < -1.5:
+                            st.success("🟢 Strong Buy Zone")
+                        else:
+                            st.info("⚪ Neutral")
+
+            st.divider()
+
+            # Adapted Puell
+            puell = calculate_puell(daily_burn, price)
+            st.subheader("🔥 Adapted Puell Multiple")
+            st.metric("Puell", f"{puell:.2f}" if puell else "—")
+            if puell:
+                if puell > 1.8:
+                    st.success("High Burn Pressure → Bullish")
+                elif puell > 1.0:
+                    st.info("Above Average")
+                else:
+                    st.warning("Low Burn Activity")
 
             # Charts
             st.subheader("Historical Charts")
@@ -162,9 +182,9 @@ while True:
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['market_cap']/1e9,
                                            name="Market Cap ($B)", line=dict(color="#1E88E5", width=2.5)))
-                    fig.add_hline(y=REALIZED_CAP/1e9, line_dash="dash", line_color="red", 
-                                 annotation_text=f"Realized Cap ≈ ${REALIZED_CAP/1e9:.1f}B (Glassnode)")
-                    fig.update_layout(height=380, margin=dict(l=10,r=10,t=40,b=10))
+                    fig.add_hline(y=REALIZED_CAP/1e9, line_dash="dash", line_color="red",
+                                 annotation_text=f"Realized Cap ≈ ${REALIZED_CAP/1e9:.1f}B")
+                    fig.update_layout(height=380)
                     st.plotly_chart(fig, use_container_width=True)
 
             with tab2:
@@ -172,10 +192,10 @@ while True:
                     fig2 = go.Figure()
                     fig2.add_trace(go.Scatter(x=hist_df.index, y=hist_df['price'],
                                             name="Price (USD)", line=dict(color="#FF9800", width=2.5)))
-                    fig2.update_layout(height=380, margin=dict(l=10,r=10,t=40,b=10))
+                    fig2.update_layout(height=380)
                     st.plotly_chart(fig2, use_container_width=True)
 
-            st.caption("Realized Cap sourced from Glassnode on-chain data • Updated May 2026")
+            st.caption("Realized Cap from Glassnode • Z-Scores calculated over different historical windows")
 
     if not auto_refresh:
         break
