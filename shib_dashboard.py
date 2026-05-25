@@ -99,7 +99,7 @@ while True:
             # Top Metrics
             col1, col2, col3, col4 = st.columns(4)
             with col1:
-                st.metric("Price", f"${price:.10f}")
+                st.metric("Price", f"${price:.8f}")
             with col2:
                 st.metric("Market Cap", f"${mcap:,.0f}")
             with col3:
