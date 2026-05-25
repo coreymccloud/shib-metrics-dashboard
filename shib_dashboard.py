@@ -20,14 +20,15 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🐕 Shiba Inu (SHIB) Burn & Price Tracker")
-st.caption("🔄 Auto-refreshes every 15s • DexScreener + Etherscan")
+st.caption("🔄 Auto-refreshes every 15s • DexScreener + Etherscan V2")
 
-# ================== API KEYS (OPTIONAL) ==================
-# Get free Etherscan API key at: https://etherscan.io/apis
-ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "YourApiKeyToken")  # or hardcode your key
+# ================== ETHERSCAN API KEY ==================
+# Get free key here: https://etherscan.io/apidashboard
+ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "S1JBXUTRAPY3WGTA5ZA4N7IRZEFVR25ZIC")  # Replace with your key
 
-# SHIB Contract
+# SHIB Contract on Ethereum (chainid=1)
 SHIB_CONTRACT = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"
+CHAIN_ID = 1
 
 # Main burn addresses
 BURN_ADDRESSES = [
@@ -37,38 +38,36 @@ BURN_ADDRESSES = [
 
 def fetch_price_dexscreener():
     try:
-        # Get token pairs on Ethereum
         url = f"https://api.dexscreener.com/token-pairs/v1/ethereum/{SHIB_CONTRACT}"
         resp = requests.get(url, timeout=10)
         data = resp.json()
         
         if data and isinstance(data, list) and len(data) > 0:
-            # Take the pair with highest liquidity
             best_pair = max(data, key=lambda x: x.get('liquidity', {}).get('usd', 0))
             price = float(best_pair.get('priceUsd', 0))
-            return price
+            return price if price > 0 else None
         return None
     except:
         return None
 
 def fetch_supply_and_burn():
     try:
-        base_url = "https://api.etherscan.io/api"
+        base_url = "https://api.etherscan.io/v2/api"
         
-        # 1. Total Supply
-        supply_url = f"{base_url}?module=stats&action=tokensupply&contractaddress={SHIB_CONTRACT}&apikey={ETHERSCAN_API_KEY}"
+        # 1. Total Supply (V2)
+        supply_url = f"{base_url}?chainid={CHAIN_ID}&module=stats&action=tokensupply&contractaddress={SHIB_CONTRACT}&apikey={ETHERSCAN_API_KEY}"
         supply_resp = requests.get(supply_url, timeout=10).json()
         total_supply = int(supply_resp.get('result', 0))
         
-        # 2. Burned tokens (sum balances in dead addresses)
+        # 2. Burned tokens
         burned = 0
         for addr in BURN_ADDRESSES:
-            bal_url = f"{base_url}?module=account&action=tokenbalance&contractaddress={SHIB_CONTRACT}&address={addr}&tag=latest&apikey={ETHERSCAN_API_KEY}"
+            bal_url = f"{base_url}?chainid={CHAIN_ID}&module=account&action=tokenbalance&contractaddress={SHIB_CONTRACT}&address={addr}&tag=latest&apikey={ETHERSCAN_API_KEY}"
             bal_resp = requests.get(bal_url, timeout=10).json()
             burned += int(bal_resp.get('result', 0))
         
         initial_supply = 1_000_000_000_000_000
-        burn_percentage = (burned / initial_supply) * 100
+        burn_percentage = (burned / initial_supply) * 100 if initial_supply > 0 else 0
         
         return {
             "total_supply": total_supply,
@@ -76,7 +75,7 @@ def fetch_supply_and_burn():
             "burn_percentage": burn_percentage
         }
     except Exception as e:
-        st.error(f"Etherscan error: {e}")
+        st.error(f"Etherscan V2 error: {e}")
         return None
 
 # Fetch data
@@ -110,10 +109,10 @@ if price is not None and supply_data:
         st.metric("Remaining Supply", f"{supply_data['total_supply'] - supply_data['burned']:,.0f}")
 
     st.success(f"✅ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
-    st.caption("Price: DexScreener • Supply/Burn: Etherscan (on-chain)")
+    st.caption("Price: DexScreener • Supply & Burn: Etherscan API V2 (on-chain)")
 
 else:
-    st.error("Failed to fetch data. Please try again later.")
+    st.error("Failed to fetch data. Make sure your Etherscan API key is correct.")
 
 st.markdown("---")
-st.caption("Initial Supply: 1 Quadrillion SHIB")
+st.caption("Initial Supply: 1,000,000,000,000,000 SHIB")
