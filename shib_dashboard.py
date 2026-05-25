@@ -5,37 +5,37 @@ import numpy as np
 import plotly.graph_objects as go
 import time
 
-# ====================== MOBILE OPTIMIZATIONS ======================
+# ====================== STRONG MOBILE OPTIMIZATIONS ======================
 st.set_page_config(
-    page_title="SHIB Live Metrics",
+    page_title="SHIB Metrics",
     layout="centered",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
+    menu_items={"About": "SHIB MVRV & Z-Score Dashboard"}
 )
 
 st.html("""
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <style>
-        .stMetric { font-size: 1.15rem !important; }
-        .stMarkdown h1 { font-size: 1.85rem !important; }
-        button { min-height: 52px !important; }
+        .stMetric { font-size: 1.2rem !important; padding: 10px 0 !important; }
+        .stMarkdown h1 { font-size: 1.9rem !important; }
+        .stMarkdown h2 { font-size: 1.4rem !important; }
+        button { min-height: 52px !important; font-size: 1rem !important; }
+        .stPlotlyChart { margin: 8px 0 !important; }
+        .css-1d391kg { padding-top: 1rem !important; } /* Reduce spacing */
     </style>
 """)
 
 st.title("🚀 SHIB Live Metrics")
-st.caption("MVRV • Multi-Period Z-Score | Glassnode Realized Cap")
+st.caption("MVRV Ratio + Multi-Period Z-Score")
 
-auto_refresh = st.toggle("🔄 Auto-refresh every 15 seconds", value=True)
+auto_refresh = st.toggle("🔄 Auto-refresh every 15s", value=True)
 
 # ====================== CONSTANTS ======================
 REALIZED_CAP = 3_300_000_000
 
 PERIODS = [
-    ("3 Days", 3),
-    ("5 Days", 5),
-    ("30 Days", 30),
-    ("90 Days", 90),
-    ("180 Days", 180),
-    ("365 Days", 365)
+    ("3 Days", 3), ("5 Days", 5), ("30 Days", 30),
+    ("90 Days", 90), ("180 Days", 180), ("365 Days", 365)
 ]
 
 # ====================== DATA FETCHING ======================
@@ -74,18 +74,12 @@ def calculate_zscore(current_mvrv, hist_series):
     return (current_mvrv - mean) / std if std > 0 else None
 
 def get_zscore_action(zscore):
-    if zscore is None:
-        return "Not enough data"
-    if zscore > 2.0:
-        return "🔴 Strong Sell / Top Signal"
-    elif zscore > 1.0:
-        return "🟡 Take Profits"
-    elif zscore < -1.5:
-        return "🟢 Strong Buy / Accumulate"
-    elif zscore < -1.0:
-        return "🟢 Buy Zone"
-    else:
-        return "⚪ Hold / Neutral"
+    if zscore is None: return "Not enough data"
+    if zscore > 2.0: return "🔴 Strong Sell"
+    elif zscore > 1.0: return "🟡 Take Profits"
+    elif zscore < -1.5: return "🟢 Strong Buy"
+    elif zscore < -1.0: return "🟢 Buy Zone"
+    else: return "⚪ Neutral"
 
 # ====================== MAIN DASHBOARD ======================
 placeholder = st.empty()
@@ -96,80 +90,63 @@ while True:
         hist_df = get_historical_data(days=365)
 
         if not current:
-            st.error("⚠️ Unable to fetch data. Retrying soon...")
+            st.error("⚠️ Unable to fetch data...")
         else:
             price = current['price']
             mcap = current['market_cap']
             current_mvrv = calculate_mvrv(mcap)
 
-            # Top Row (Burn removed)
-            st.metric("Price", f"${price:.10f}")
+            st.metric("**Current Price**", f"${price:.10f}")
 
             st.divider()
 
             # Current MVRV
             st.subheader("Current MVRV")
-            mcol1, mcol2 = st.columns([2, 1])
-            with mcol1:
+            col1, col2 = st.columns([3, 1])
+            with col1:
                 st.metric("MVRV Ratio", f"{current_mvrv:.2f}" if current_mvrv else "—")
-            with mcol2:
-                with st.expander("What is MVRV?", expanded=False):
-                    st.markdown("""
-                    **MVRV = Market Cap ÷ Realized Cap**  
-                    - Market Cap: Current price × supply  
-                    - Realized Cap: Value at last on-chain movement  
-                    **Guide**: >2.5 Overvalued | 0.8-1.2 Fair | <0.8 Undervalued
-                    """)
+            with col2:
+                with st.expander("ℹ️", expanded=False):
+                    st.markdown("**MVRV** = Market Cap ÷ Realized Cap")
 
             st.divider()
 
-            # MVRV Z-Score Section
+            # Z-Scores - Better mobile layout
             st.subheader("MVRV Z-Score by Time Period")
-            
-            zcol1, zcol2 = st.columns([3, 1])
-            with zcol1:
-                zscore_cols = st.columns(3)
-                for idx, (label, days) in enumerate(PERIODS):
-                    with zscore_cols[idx % 3]:
-                        period_df = hist_df.tail(days) if not hist_df.empty else hist_df
-                        hist_mvrv = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
-                        zscore = calculate_zscore(current_mvrv, hist_mvrv)
-                        
-                        st.metric(label, f"{zscore:.2f}" if zscore is not None else "—")
-                        st.caption(get_zscore_action(zscore))
-
-            with zcol2:
-                with st.expander("What is MVRV Z-Score?", expanded=False):
-                    st.markdown("""
-                    **Z-Score = (Current MVRV − Historical Avg) ÷ Std Dev**  
-                    Shows how extreme today's valuation is vs history.
-                    """)
+            for i in range(0, len(PERIODS), 2):   # 2 per row on mobile
+                cols = st.columns(2)
+                for j in range(2):
+                    if i + j < len(PERIODS):
+                        label, days = PERIODS[i + j]
+                        with cols[j]:
+                            period_df = hist_df.tail(days) if not hist_df.empty else hist_df
+                            hist_mvrv = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
+                            zscore = calculate_zscore(current_mvrv, hist_mvrv)
+                            st.metric(label, f"{zscore:.2f}" if zscore is not None else "—")
+                            st.caption(get_zscore_action(zscore))
 
             st.divider()
 
-            # Charts
-            st.subheader("Historical Charts")
-            tab1, tab2 = st.tabs(["Market Cap vs Realized", "Price History"])
+            # Charts - Smaller height for mobile
+            st.subheader("Charts")
+            tab1, tab2 = st.tabs(["Market Cap", "Price"])
 
             with tab1:
                 if not hist_df.empty:
                     fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['market_cap']/1e9,
-                                           name="Market Cap ($B)", line=dict(color="#1E88E5", width=2.5)))
-                    fig.add_hline(y=REALIZED_CAP/1e9, line_dash="dash", line_color="red",
-                                 annotation_text=f"Realized ≈ ${REALIZED_CAP/1e9:.1f}B")
-                    fig.update_layout(height=380)
+                    fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['market_cap']/1e9, 
+                                           line=dict(color="#1E88E5", width=2.5)))
+                    fig.add_hline(y=REALIZED_CAP/1e9, line_dash="dash", line_color="red")
+                    fig.update_layout(height=320, margin=dict(l=10, r=10, t=30, b=10))
                     st.plotly_chart(fig, use_container_width=True)
 
             with tab2:
                 if not hist_df.empty:
                     fig2 = go.Figure()
-                    fig2.add_trace(go.Scatter(x=hist_df.index, y=hist_df['price'],
-                                            name="Price (USD)", line=dict(color="#FF9800", width=2.5)))
-                    fig2.update_layout(height=380)
+                    fig2.add_trace(go.Scatter(x=hist_df.index, y=hist_df['price'], 
+                                            line=dict(color="#FF9800", width=2.5)))
+                    fig2.update_layout(height=320, margin=dict(l=10, r=10, t=30, b=10))
                     st.plotly_chart(fig2, use_container_width=True)
-
-            st.caption("Realized Cap from Glassnode")
 
     if not auto_refresh:
         break
