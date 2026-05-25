@@ -161,7 +161,7 @@ while True:
             # MVRV Z-Score Section with Typical Action
             st.subheader("MVRV Z-Score by Time Period")
             
-            zcol1, zcol2 = st.columns([3, 1])
+            zcol1, zcol2 = st.columns([5, 1])
             with zcol1:
                 zscore_cols = st.columns(4)
                 for idx, (label, days) in enumerate(PERIODS.items()):
