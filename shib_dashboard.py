@@ -11,7 +11,8 @@ import re
 st.set_page_config(
     page_title="SHIB Live Metrics",
     layout="centered",
-    initial_sidebar_state="collapsed"
+    initial_sidebar_state="collapsed",
+    menu_items={"About": "Shiba Inu MVRV + Z-Score + Puell Dashboard"}
 )
 
 st.html("""
@@ -20,26 +21,14 @@ st.html("""
         .stMetric { font-size: 1.15rem !important; }
         .stMarkdown h1 { font-size: 1.85rem !important; }
         button { min-height: 52px !important; }
+        .stPlotlyChart { margin-bottom: 10px !important; }
     </style>
 """)
 
 st.title("🚀 SHIB Live Metrics")
-st.caption("MVRV • Multi-Period Z-Score • Adapted Puell | Burnalytics + Glassnode")
+st.caption("MVRV • MVRV Z-Score • Adapted Puell Multiple | Accurate Burn Scraper")
 
 auto_refresh = st.toggle("🔄 Auto-refresh every 15 seconds", value=True)
-
-# ====================== CONSTANTS ======================
-REALIZED_CAP = 3_300_000_000
-
-# Strictly ascending order
-PERIODS = [
-    ("3 Days", 3),
-    ("5 Days", 5),
-    ("30 Days", 30),
-    ("90 Days", 90),
-    ("180 Days", 180),
-    ("365 Days", 365)
-]
 
 # ====================== DATA FETCHING ======================
 @st.cache_data(ttl=60)
@@ -48,16 +37,16 @@ def get_shib_current():
         data = requests.get("https://api.coingecko.com/api/v3/coins/shiba-inu", timeout=10).json()
         return {
             'price': data['market_data']['current_price']['usd'],
-            'market_cap': data['market_data']['market_cap']['usd'],
+            'market_cap': data['market_data']['market_cap']['usd'],  # kept for calculations
         }
     except:
         return None
 
-@st.cache_data(ttl=3600)
-def get_historical_data(days=365):
+@st.cache_data(ttl=1800)
+def get_historical_data(days=180):
     try:
         url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days={days}&interval=daily"
-        data = requests.get(url, timeout=20).json()
+        data = requests.get(url, timeout=15).json()
         return pd.DataFrame({
             'market_cap': [item[1] for item in data.get('market_caps', [])],
             'price': [item[1] for item in data.get('prices', [])]
@@ -65,71 +54,31 @@ def get_historical_data(days=365):
     except:
         return pd.DataFrame()
 
-def get_daily_burn():
-    """Improved robust scraper - tries multiple patterns"""
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-
-    # 1. Shibburn (Primary - most reliable right now)
+def scrape_daily_burn():
+    """Improved Shibburn scraper"""
     try:
-        r = requests.get("https://www.shibburn.com/", headers=headers, timeout=15)
-        text = r.text
+        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
+        response = requests.get("https://www.shibburn.com/", headers=headers, timeout=12)
+        text = response.text
 
-        # Multiple fallback patterns for "Last 24 Hours"
-        patterns = [
-            r'Last 24 Hours[^0-9]*([\d,]+)',           # Original
-            r'Last 24 Hours.*?>?([\d,]+)',             # More flexible
-            r'24 Hours[^0-9]*([\d,]+)',                # Alternative label
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
-            if match:
-                val = int(match.group(1).replace(',', ''))
-                if 10_000 < val < 500_000_000:
-                    return val, "Shibburn"
-    except:
-        pass
-
-    # 2. Burnalytics fallback
-    try:
-        r = requests.get("https://www.burnalytics.com/asset/0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce", 
-                        headers=headers, timeout=15)
-        text = r.text
-        match = re.search(r'24H[^0-9]*([\d,]+)', text, re.IGNORECASE | re.DOTALL)
+        match = re.search(r'Last 24 Hours[^0-9]*([\d,]+)', text, re.IGNORECASE | re.DOTALL)
         if match:
-            val = int(match.group(1).replace(',', ''))
-            if 10_000 < val < 500_000_000:
-                return val, "Burnalytics"
+            burn_str = match.group(1).replace(',', '')
+            daily = int(burn_str)
+            if 10_000 < daily < 500_000_000:
+                return daily
     except:
         pass
-
-    # Safe fallback
-    return 1_271_623, "Fallback"
+    return 1_271_623  # fallback
 
 # ====================== CALCULATIONS ======================
-def calculate_mvrv(mcap):
-    return mcap / REALIZED_CAP if REALIZED_CAP > 0 else None
+def calculate_mvrv(mcap, realized=2_900_000_000):
+    return mcap / realized if realized > 0 else None
 
 def calculate_zscore(current_mvrv, hist_series):
-    if len(hist_series) < 2 or current_mvrv is None:
+    if len(hist_series) < 20 or current_mvrv is None:
         return None
-    mean = np.mean(hist_series)
-    std = np.std(hist_series)
-    return (current_mvrv - mean) / std if std > 0 else None
-
-def get_zscore_action(zscore):
-    if zscore is None:
-        return "Not enough data"
-    if zscore > 2.0:
-        return "🔴 Strong Sell / Top Signal"
-    elif zscore > 1.0:
-        return "🟡 Take Profits"
-    elif zscore < -1.5:
-        return "🟢 Strong Buy / Accumulate"
-    elif zscore < -1.0:
-        return "🟢 Buy Zone"
-    else:
-        return "⚪ Hold / Neutral"
+    return (current_mvrv - np.mean(hist_series)) / np.std(hist_series)
 
 def calculate_puell(daily_burn, price):
     daily_val = daily_burn * price
@@ -142,82 +91,66 @@ placeholder = st.empty()
 while True:
     with placeholder.container():
         current = get_shib_current()
-        hist_df = get_historical_data(days=365)
-        daily_burn, source = get_daily_burn()
+        hist_df = get_historical_data()
+        daily_burn = scrape_daily_burn()
 
         if not current:
             st.error("⚠️ Unable to fetch data. Retrying soon...")
         else:
             price = current['price']
             mcap = current['market_cap']
-            current_mvrv = calculate_mvrv(mcap)
+            mvrv = calculate_mvrv(mcap)
+            hist_mvrv = (hist_df['market_cap'] / 2_900_000_000).tolist() if not hist_df.empty else []
+            zscore = calculate_zscore(mvrv, hist_mvrv)
+            puell = calculate_puell(daily_burn, price)
 
-            # Top Row
+            # === Top Metrics ===
             col1, col2 = st.columns(2)
             with col1:
                 st.metric("Price", f"${price:.10f}")
             with col2:
-                st.metric("24h Burn", f"{daily_burn:,.0f} SHIB", delta=f"via {source}")
+                st.metric("24h Burn", f"{daily_burn:,.0f} SHIB")
 
             st.divider()
 
-            # Current MVRV
-            st.subheader("Current MVRV")
-            mcol1, mcol2 = st.columns([2, 1])
-            with mcol1:
-                st.metric("MVRV Ratio", f"{current_mvrv:.2f}" if current_mvrv else "—")
-            with mcol2:
-                with st.expander("What is MVRV?", expanded=False):
-                    st.markdown("""
-                    **MVRV = Market Cap ÷ Realized Cap**  
-                    - Market Cap: Current price × supply  
-                    - Realized Cap: Value at last on-chain movement  
-                    **Guide**: >2.5 Overvalued | 0.8-1.2 Fair | <0.8 Undervalued
-                    """)
+            # Key Indicators
+            st.subheader("Key Indicators")
+            c1, c2, c3 = st.columns(3)
 
-            st.divider()
+            with c1:
+                st.metric("📈 MVRV Ratio", f"{mvrv:.2f}" if mvrv else "—")
+                if mvrv:
+                    if mvrv > 2.5: st.error("🔴 Significantly Overvalued")
+                    elif mvrv > 1.2: st.warning("🟡 In Profit Zone")
+                    elif mvrv < 0.8: st.success("🟢 Potentially Undervalued")
+                    else: st.info("⚪ Fair Value")
 
-            # MVRV Z-Score - ASCENDING ORDER (Fixed)
-            st.subheader("MVRV Z-Score by Time Period")
-            
-            # Use 2 rows of 3 columns for clean ascending display
-            for row in range(2):
-                cols = st.columns(3)
-                for i in range(3):
-                    idx = row * 3 + i
-                    if idx < len(PERIODS):
-                        label, days = PERIODS[idx]
-                        with cols[i]:
-                            period_df = hist_df.tail(days) if not hist_df.empty else hist_df
-                            hist_mvrv = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
-                            zscore = calculate_zscore(current_mvrv, hist_mvrv)
-                            
-                            st.metric(label, f"{zscore:.2f}" if zscore is not None else "—")
-                            st.caption(get_zscore_action(zscore))
+            with c2:
+                st.metric("📉 MVRV Z-Score", f"{zscore:.2f}" if zscore else "—")
+                if zscore:
+                    if zscore > 2.0: st.error("🔴 Extreme Overvalued")
+                    elif zscore > 1.0: st.warning("🟡 Overvalued")
+                    elif zscore < -1.5: st.success("🟢 Strong Buy Zone")
+                    else: st.info("⚪ Neutral")
 
-            st.divider()
-
-            # Puell
-            puell = calculate_puell(daily_burn, price)
-            st.subheader("🔥 Adapted Puell Multiple")
-            st.metric("Puell", f"{puell:.2f}" if puell else "—")
-            if puell:
-                if puell > 1.8: st.success("High Burn Pressure → Bullish")
-                elif puell > 1.0: st.info("Above Average")
-                else: st.warning("Low Burn Activity")
+            with c3:
+                st.metric("🔥 Adapted Puell", f"{puell:.2f}" if puell else "—")
+                if puell:
+                    if puell > 1.8: st.success("🔥 High Burn Pressure → Bullish")
+                    elif puell > 1.0: st.info("🟡 Above Average")
+                    else: st.warning("⚠️ Low Burn Activity")
 
             # Charts
             st.subheader("Historical Charts")
-            tab1, tab2 = st.tabs(["Market Cap vs Realized", "Price History"])
+            tab1, tab2 = st.tabs(["Market Cap", "Price History"])
 
             with tab1:
                 if not hist_df.empty:
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['market_cap']/1e9,
                                            name="Market Cap ($B)", line=dict(color="#1E88E5", width=2.5)))
-                    fig.add_hline(y=REALIZED_CAP/1e9, line_dash="dash", line_color="red",
-                                 annotation_text=f"Realized ≈ ${REALIZED_CAP/1e9:.1f}B")
-                    fig.update_layout(height=380)
+                    fig.add_hline(y=2.9, line_dash="dash", line_color="red", annotation_text="Est. Realized Cap ~$2.9B")
+                    fig.update_layout(height=380, margin=dict(l=10, r=10, t=40, b=10))
                     st.plotly_chart(fig, use_container_width=True)
 
             with tab2:
@@ -225,10 +158,10 @@ while True:
                     fig2 = go.Figure()
                     fig2.add_trace(go.Scatter(x=hist_df.index, y=hist_df['price'],
                                             name="Price (USD)", line=dict(color="#FF9800", width=2.5)))
-                    fig2.update_layout(height=380)
+                    fig2.update_layout(height=380, margin=dict(l=10, r=10, t=40, b=10))
                     st.plotly_chart(fig2, use_container_width=True)
 
-            st.caption("Realized Cap from Glassnode")
+            st.caption("Realized Cap is an estimate • Data from CoinGecko & Shibburn")
 
     if not auto_refresh:
         break
@@ -236,5 +169,6 @@ while True:
     time.sleep(15)
     st.rerun()
 
+# Manual refresh
 if st.button("🔄 Refresh Now", use_container_width=True, type="primary"):
     st.rerun()
