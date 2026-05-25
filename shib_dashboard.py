@@ -31,7 +31,6 @@ auto_refresh = st.toggle("🔄 Auto-refresh every 15 seconds", value=True)
 # ====================== CONSTANTS ======================
 REALIZED_CAP = 3_300_000_000
 
-# Added 1 Day and 5 Days
 PERIODS = {
     "1 Day": 1,
     "5 Days": 5,
@@ -93,7 +92,7 @@ def calculate_mvrv(mcap):
     return mcap / REALIZED_CAP if REALIZED_CAP > 0 else None
 
 def calculate_zscore(current_mvrv, hist_series):
-    if len(hist_series) < 2 or current_mvrv is None:   # Need at least 2 points for std
+    if len(hist_series) < 2 or current_mvrv is None:
         return None
     mean = np.mean(hist_series)
     std = np.std(hist_series)
@@ -164,10 +163,9 @@ while True:
             
             zcol1, zcol2 = st.columns([3, 1])
             with zcol1:
-                zscore_cols = st.columns(3)  # 3 columns for better mobile layout with 6 periods
+                zscore_cols = st.columns(3)
                 for idx, (label, days) in enumerate(PERIODS.items()):
-                    col_idx = idx % 3
-                    with zscore_cols[col_idx]:
+                    with zscore_cols[idx % 3]:
                         period_df = hist_df.tail(days) if not hist_df.empty else hist_df
                         hist_mvrv = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
                         zscore = calculate_zscore(current_mvrv, hist_mvrv)
@@ -215,7 +213,7 @@ while True:
                     fig2.update_layout(height=380)
                     st.plotly_chart(fig2, use_container_width=True)
 
-            st.caption("Realized Cap from Glassnode • Very short periods (1d/5d) are more volatile")
+            st.caption("Realized Cap from Glassnode • 1 Day uses limited data (more volatile)")
 
     if not auto_refresh:
         break
