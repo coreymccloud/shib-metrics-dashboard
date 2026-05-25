@@ -1,153 +1,88 @@
 import streamlit as st
 import requests
-import pandas as pd
-import numpy as np
-import plotly.graph_objects as go
+from bs4 import BeautifulSoup
+from datetime import datetime
 import time
 
-st.set_page_config(page_title="SHIB Metrics", layout="centered", initial_sidebar_state="collapsed")
+st.set_page_config(page_title="🔥 SHIB Burn Dashboard", layout="centered")
 
-st.html("""
-    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
-    <style>
-        .stMetric { font-size: 1.25rem !important; margin: 4px 0 !important; }
-        .stMarkdown h1 { font-size: 1.75rem !important; }
-        button { min-height: 48px !important; }
-    </style>
-""")
+st.title("🔥 SHIBA INU 24H BURN DASHBOARD")
+st.markdown("**Live data from Shibburn • Powered by community trackers**")
 
-st.title("🚀 SHIB Metrics")
-st.caption("MVRV + Z-Score")
+# Sidebar
+st.sidebar.header("Settings")
+refresh_interval = st.sidebar.slider("Auto-refresh (seconds)", 30, 300, 60)
+show_details = st.sidebar.checkbox("Show latest burns", value=True)
 
-auto_refresh = st.toggle("Auto-refresh 15s", value=True)
-
-# ====================== CONSTANTS ======================
-REALIZED_CAP = 3_300_000_000
-
-PERIODS = [
-    ("3D", 3), ("5D", 5), ("30D", 30),
-    ("90D", 90), ("180D", 180), ("365D", 365)
-]
-
-# ====================== DATA ======================
-@st.cache_data(ttl=60)
-def get_current():
+@st.cache_data(ttl=60)  # Cache for 60 seconds
+def fetch_shibburn_data():
     try:
-        data = requests.get("https://api.coingecko.com/api/v3/coins/shiba-inu", timeout=10).json()
-        return {
-            'price': data['market_data']['current_price']['usd'],
-            'market_cap': data['market_data']['market_cap']['usd'],
-        }
+        headers = {"User-Agent": "SHIB-Dashboard/1.0"}
+        resp = requests.get("https://www.shibburn.com/", headers=headers, timeout=10)
+        resp.raise_for_status()
+        soup = BeautifulSoup(resp.text, 'html.parser')
+        
+        # Extract 24h burn
+        burn_text = None
+        for elem in soup.find_all(['div', 'span', 'p', 'h']):
+            if 'Last 24 Hours' in elem.get_text() or '24h' in elem.get_text().lower():
+                parent = elem.parent
+                if parent:
+                    numbers = [t for t in parent.get_text().split() if t.replace(',', '').replace('.', '').isdigit()]
+                    if numbers:
+                        burn_text = numbers[0]
+                        break
+        
+        # Fallback regex search
+        import re
+        match = re.search(r'Last 24 Hours.*?([\d,]+)', resp.text, re.IGNORECASE | re.DOTALL)
+        if match and not burn_text:
+            burn_text = match.group(1)
+        
+        burn_24h = int(burn_text.replace(',', '')) if burn_text else None
+        
+        # Price from CoinGecko
+        price_resp = requests.get(
+            "https://api.coingecko.com/api/v3/simple/price?ids=shiba-inu&vs_currencies=usd",
+            timeout=10
+        )
+        price = price_resp.json().get("shiba-inu", {}).get("usd")
+        
+        return burn_24h, price
     except Exception as e:
-        st.error(f"API Error: {e}")
-        return None
+        st.error(f"Fetch error: {e}")
+        return None, None
 
-@st.cache_data(ttl=1800)
-def get_history():
-    try:
-        url = "https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days=365&interval=daily"
-        data = requests.get(url, timeout=20).json()
-        df = pd.DataFrame({
-            'market_cap': [item[1] for item in data.get('market_caps', [])],
-            'price': [item[1] for item in data.get('prices', [])]
-        })
-        return df
-    except:
-        return pd.DataFrame()
+# Main display
+burn_24h, price = fetch_shibburn_data()
 
-# ====================== CALCULATIONS ======================
-def calculate_mvrv(mcap):
-    return mcap / REALIZED_CAP if REALIZED_CAP > 0 else None
+col1, col2, col3 = st.columns(3)
+with col1:
+    st.metric("24H Burned", f"{burn_24h:,} SHIB" if burn_24h else "N/A")
+with col2:
+    usd_value = burn_24h * price if burn_24h and price else None
+    st.metric("USD Value", f"${usd_value:,.2f}" if usd_value else "N/A")
+with col3:
+    st.metric("SHIB Price", f"${price:.8f}" if price else "N/A")
 
-def calculate_zscore(current_mvrv, hist_series):
-    if len(hist_series) < 2 or current_mvrv is None:
-        return None
-    mean = np.mean(hist_series)
-    std = np.std(hist_series)
-    return (current_mvrv - mean) / std if std > 0 else None
+# Progress / Impact
+if burn_24h:
+    circulating = 585_000_000_000_000  # Approx
+    impact = (burn_24h / circulating) * 100
+    st.progress(impact / 0.01, text=f"Supply Impact: {impact:.6f}%")
 
-def get_action(z):
-    if z is None: return "—"
-    if z > 2.0: return "🔴 Strong Sell"
-    if z > 1.0: return "🟡 Take Profit"
-    if z < -1.5: return "🟢 Strong Buy"
-    if z < -1.0: return "🟢 Buy Zone"
-    return "⚪ Neutral"
+st.caption(f"Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
 
-# ====================== MAIN ======================
-placeholder = st.empty()
+if show_details:
+    st.subheader("Latest Burns (from Shibburn)")
+    st.info("Check https://www.shibburn.com/burns for full live list")
 
-while True:
-    with placeholder.container():
-        current = get_current()
-        hist = get_history()
-
-        if not current:
-            st.error("⚠️ Unable to fetch price data")
-        else:
-            price = current['price']
-            mcap = current['market_cap']
-            current_mvrv = calculate_mvrv(mcap)
-
-            # Price with 8 decimals
-            st.metric("Price", f"${price:.8f}")
-
-            st.divider()
-
-            # MVRV
-            col1, col2 = st.columns([3, 1])
-            with col1:
-                st.metric("MVRV", f"{current_mvrv:.2f}" if current_mvrv else "—")
-            with col2:
-                with st.expander("ℹ️", expanded=False):
-                    st.caption("Market Cap / Realized Cap")
-
-            st.divider()
-
-            # Z-Scores
-            st.subheader("Z-Score by Period")
-            for i in range(0, len(PERIODS), 2):
-                cols = st.columns(2)
-                for j in range(2):
-                    if i + j < len(PERIODS):
-                        label, days = PERIODS[i + j]
-                        with cols[j]:
-                            period_df = hist.tail(days) if not hist.empty else hist
-                            hist_series = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
-                            zs = calculate_zscore(current_mvrv, hist_series)
-                            st.metric(label, f"{zs:.2f}" if zs is not None else "—")
-                            st.caption(get_action(zs))
-
-            st.divider()
-
-            # Charts
-            st.subheader("Charts")
-            tab1, tab2 = st.tabs(["Market Cap", "Price"])
-
-            with tab1:
-                if not hist.empty:
-                    fig = go.Figure()
-                    fig.add_trace(go.Scatter(x=hist.index, y=hist['market_cap']/1e9, line=dict(width=2.5)))
-                    fig.add_hline(y=REALIZED_CAP/1e9, line_dash="dash", line_color="red")
-                    fig.update_layout(height=280, margin=dict(l=10,r=10,t=20,b=10))
-                    st.plotly_chart(fig, use_container_width=True)
-                else:
-                    st.info("Loading chart...")
-
-            with tab2:
-                if not hist.empty:
-                    fig2 = go.Figure()
-                    fig2.add_trace(go.Scatter(x=hist.index, y=hist['price'], line=dict(width=2.5)))
-                    fig2.update_layout(height=280, margin=dict(l=10,r=10,t=20,b=10))
-                    st.plotly_chart(fig2, use_container_width=True)
-                else:
-                    st.info("Loading chart...")
-
-    if not auto_refresh:
-        break
-
-    time.sleep(15)
+# Auto-refresh
+if st.button("🔄 Refresh Now"):
     st.rerun()
 
-if st.button("🔄 Refresh", use_container_width=True, type="primary"):
-    st.rerun()
+st.caption("💡 Pro tip: Deploy free on Streamlit Cloud. For production use Burnalytics API (requires key).")
+
+# Footer
+st.markdown("---")
+st.markdown("[Shibburn.com](https://www.shibburn.com/) • [Burnalytics](https://www.burnalytics.com/) • Data is on-chain aggregated")
