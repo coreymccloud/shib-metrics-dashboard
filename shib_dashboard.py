@@ -54,11 +54,6 @@ def fetch_supply_and_burn():
     try:
         base_url = "https://api.etherscan.io/v2/api"
         
-        # 1. Total Supply (V2)
-        supply_url = f"{base_url}?chainid={CHAIN_ID}&module=stats&action=tokensupply&contractaddress={SHIB_CONTRACT}&apikey={ETHERSCAN_API_KEY}"
-        supply_resp = requests.get(supply_url, timeout=10).json()
-        total_supply = int(supply_resp.get('result', 0))
-        
         # 2. Burned tokens
         burned = 0
         for addr in BURN_ADDRESSES:
@@ -70,7 +65,6 @@ def fetch_supply_and_burn():
         burn_percentage = (burned / initial_supply) * 100 if initial_supply > 0 else 0
         
         return {
-            "total_supply": total_supply,
             "burned": burned,
             "burn_percentage": burn_percentage
         }
@@ -99,11 +93,9 @@ if price is not None and supply_data:
 
     st.divider()
 
-    st.subheader("Supply & Burn Details")
-    col_a, col_b, = st.columns(2)
+    st.subheader("Burn Details")
+    col_a, = st.columns(1)
     with col_a:
-        st.metric("Total Supply", f"{supply_data['total_supply']:,.0f}")
-    with col_b:
         st.metric("Tokens Burned", f"{supply_data['burned']:,.4f}")
 
     st.success(f"✅ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
