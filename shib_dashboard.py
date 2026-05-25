@@ -1,88 +1,91 @@
 import streamlit as st
 import requests
-from bs4 import BeautifulSoup
-from datetime import datetime
 import time
+from datetime import datetime
 
-st.set_page_config(page_title="🔥 SHIB Burn Dashboard", layout="centered")
+# Page config
+st.set_page_config(
+    page_title="SHIB Burn Tracker",
+    page_icon="🐕",
+    layout="centered"
+)
 
-st.title("🔥 SHIBA INU 24H BURN DASHBOARD")
-st.markdown("**Live data from Shibburn • Powered by community trackers**")
+# Auto-refresh using st_autorefresh component (install if needed)
+try:
+    from streamlit_autorefresh import st_autorefresh
+    # Refresh every 15 seconds
+    st_autorefresh(interval=15000, limit=None, key="datarefresh")
+except ImportError:
+    st.warning("For auto-refresh every 15s, run: `pip install streamlit-autorefresh`")
 
-# Sidebar
-st.sidebar.header("Settings")
-refresh_interval = st.sidebar.slider("Auto-refresh (seconds)", 30, 300, 60)
-show_details = st.sidebar.checkbox("Show latest burns", value=True)
+st.title("🐕 Shiba Inu (SHIB) Burn & Price Tracker")
+st.markdown("**Live data • Updates every 15 seconds**")
 
-@st.cache_data(ttl=60)  # Cache for 60 seconds
-def fetch_shibburn_data():
+# Fetch data function
+def fetch_shib_data():
     try:
-        headers = {"User-Agent": "SHIB-Dashboard/1.0"}
-        resp = requests.get("https://www.shibburn.com/", headers=headers, timeout=10)
-        resp.raise_for_status()
-        soup = BeautifulSoup(resp.text, 'html.parser')
+        # CoinGecko API - SHIB data
+        url = "https://api.coingecko.com/api/v3/coins/shiba-inu"
+        response = requests.get(url, timeout=10)
+        response.raise_for_status()
+        data = response.json()
         
-        # Extract 24h burn
-        burn_text = None
-        for elem in soup.find_all(['div', 'span', 'p', 'h']):
-            if 'Last 24 Hours' in elem.get_text() or '24h' in elem.get_text().lower():
-                parent = elem.parent
-                if parent:
-                    numbers = [t for t in parent.get_text().split() if t.replace(',', '').replace('.', '').isdigit()]
-                    if numbers:
-                        burn_text = numbers[0]
-                        break
+        price = data['market_data']['current_price']['usd']
+        total_supply = data['market_data'].get('total_supply') or 589_000_000_000_000  # approx
+        circulating_supply = data['market_data'].get('circulating_supply') or 589_000_000_000_000
         
-        # Fallback regex search
-        import re
-        match = re.search(r'Last 24 Hours.*?([\d,]+)', resp.text, re.IGNORECASE | re.DOTALL)
-        if match and not burn_text:
-            burn_text = match.group(1)
+        # Initial supply is ~1 quadrillion (1_000_000_000_000_000)
+        initial_supply = 1_000_000_000_000_000
+        burned = initial_supply - total_supply
+        burn_percentage = (burned / initial_supply) * 100
         
-        burn_24h = int(burn_text.replace(',', '')) if burn_text else None
-        
-        # Price from CoinGecko
-        price_resp = requests.get(
-            "https://api.coingecko.com/api/v3/simple/price?ids=shiba-inu&vs_currencies=usd",
-            timeout=10
-        )
-        price = price_resp.json().get("shiba-inu", {}).get("usd")
-        
-        return burn_24h, price
+        return {
+            "price": price,
+            "burn_percentage": burn_percentage,
+            "burned": burned,
+            "total_supply": total_supply,
+            "circulating": circulating_supply,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        }
     except Exception as e:
-        st.error(f"Fetch error: {e}")
-        return None, None
+        st.error(f"Error fetching data: {e}")
+        return None
 
-# Main display
-burn_24h, price = fetch_shibburn_data()
+# Fetch data
+data = fetch_shib_data()
 
-col1, col2, col3 = st.columns(3)
-with col1:
-    st.metric("24H Burned", f"{burn_24h:,} SHIB" if burn_24h else "N/A")
-with col2:
-    usd_value = burn_24h * price if burn_24h and price else None
-    st.metric("USD Value", f"${usd_value:,.2f}" if usd_value else "N/A")
-with col3:
-    st.metric("SHIB Price", f"${price:.8f}" if price else "N/A")
+if data:
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.metric(
+            label="💰 Current SHIB Price (USD)",
+            value=f"${data['price']:.8f}",
+            delta=None
+        )
+    
+    with col2:
+        st.metric(
+            label="🔥 Total Burn Percentage",
+            value=f"{data['burn_percentage']:.4f}%",
+            delta=None
+        )
+    
+    st.divider()
+    
+    # Additional stats
+    st.subheader("Supply Details")
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        st.metric("Total Supply", f"{data['total_supply']:,.0f}")
+    with col_b:
+        st.metric("Circulating Supply", f"{data['circulating']:,.0f}")
+    with col_c:
+        st.metric("Tokens Burned", f"{data['burned']:,.0f}")
+    
+    st.caption(f"Last updated: {data['timestamp']}")
+else:
+    st.error("Could not fetch data. Please check your connection.")
 
-# Progress / Impact
-if burn_24h:
-    circulating = 585_000_000_000_000  # Approx
-    impact = (burn_24h / circulating) * 100
-    st.progress(impact / 0.01, text=f"Supply Impact: {impact:.6f}%")
-
-st.caption(f"Last updated: {datetime.utcnow().strftime('%Y-%m-%d %H:%M:%S UTC')}")
-
-if show_details:
-    st.subheader("Latest Burns (from Shibburn)")
-    st.info("Check https://www.shibburn.com/burns for full live list")
-
-# Auto-refresh
-if st.button("🔄 Refresh Now"):
-    st.rerun()
-
-st.caption("💡 Pro tip: Deploy free on Streamlit Cloud. For production use Burnalytics API (requires key).")
-
-# Footer
 st.markdown("---")
-st.markdown("[Shibburn.com](https://www.shibburn.com/) • [Burnalytics](https://www.burnalytics.com/) • Data is on-chain aggregated")
+st.caption("Data from CoinGecko • Initial supply: 1 Quadrillion SHIB • Burn % calculated as (Initial - Total Supply)/Initial")
