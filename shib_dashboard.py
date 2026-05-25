@@ -96,6 +96,20 @@ def calculate_zscore(current_mvrv, hist_series):
     std = np.std(hist_series)
     return (current_mvrv - mean) / std if std > 0 else None
 
+def get_zscore_action(zscore):
+    if zscore is None:
+        return ""
+    if zscore > 2.0:
+        return "🔴 Strong Sell / Top Signal"
+    elif zscore > 1.0:
+        return "🟡 Take Profits"
+    elif zscore < -1.5:
+        return "🟢 Strong Buy / Accumulate"
+    elif zscore < -1.0:
+        return "🟢 Buy Zone"
+    else:
+        return "⚪ Hold / Neutral"
+
 def calculate_puell(daily_burn, price):
     daily_val = daily_burn * price
     ma_val = daily_burn * 2.1 * price
@@ -126,7 +140,7 @@ while True:
 
             st.divider()
 
-            # Current MVRV Section
+            # Current MVRV
             st.subheader("Current MVRV")
             mcol1, mcol2 = st.columns([2, 1])
             with mcol1:
@@ -134,17 +148,15 @@ while True:
             with mcol2:
                 with st.expander("What is MVRV?", expanded=False):
                     st.markdown("""
-                    **MVRV = Market Cap ÷ Realized Cap**
-
-                    - **Market Cap**: Current price × supply  
-                    - **Realized Cap**: Value at last on-chain movement
-
+                    **MVRV = Market Cap ÷ Realized Cap**  
+                    - Market Cap: Current price × supply  
+                    - Realized Cap: Value at last on-chain movement  
                     **Guide**: >2.5 Overvalued | 0.8-1.2 Fair | <0.8 Undervalued
                     """)
 
             st.divider()
 
-            # ==================== MVRV Z-SCORE SECTION ====================
+            # MVRV Z-Score Section with Typical Action
             st.subheader("MVRV Z-Score by Time Period")
             
             zcol1, zcol2 = st.columns([3, 1])
@@ -157,23 +169,15 @@ while True:
                         zscore = calculate_zscore(current_mvrv, hist_mvrv)
                         
                         st.metric(label, f"{zscore:.2f}" if zscore is not None else "—")
-                        
-                        if zscore is not None:
-                            if zscore > 2.0: st.error("🔴 Extreme")
-                            elif zscore > 1.0: st.warning("🟡 Overvalued")
-                            elif zscore < -1.5: st.success("🟢 Strong Buy")
-                            else: st.info("⚪ Neutral")
+                        action = get_zscore_action(zscore)
+                        st.caption(action)
+
             with zcol2:
                 with st.expander("What is MVRV Z-Score?", expanded=False):
                     st.markdown("""
-                    **Z-Score = (Current MVRV − Historical Average) ÷ Standard Deviation**
+                    **Z-Score = (Current MVRV − Historical Avg) ÷ Std Dev**
 
-                    Shows **how extreme** today's MVRV is compared to the chosen period.
-
-                    - **> +2.0** → Extremely Overvalued
-                    - **+1.0 to +2.0** → Overvalued
-                    - **-1.5 to -1.0** → Undervalued
-                    - **< -2.0** → Extremely Undervalued (Strong Buy)
+                    Shows **how extreme** the current valuation is vs history.
                     """)
 
             st.divider()
@@ -209,7 +213,7 @@ while True:
                     fig2.update_layout(height=380)
                     st.plotly_chart(fig2, use_container_width=True)
 
-            st.caption("Realized Cap from Glassnode • Z-Scores use different historical windows")
+            st.caption("Realized Cap from Glassnode • Higher Z-Score = More Extreme Valuation")
 
     if not auto_refresh:
         break
