@@ -5,17 +5,13 @@ import numpy as np
 import plotly.graph_objects as go
 import time
 
-st.set_page_config(
-    page_title="SHIB Metrics",
-    layout="centered",
-    initial_sidebar_state="collapsed"
-)
+st.set_page_config(page_title="SHIB Metrics", layout="centered", initial_sidebar_state="collapsed")
 
 st.html("""
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <style>
         .stMetric { font-size: 1.25rem !important; margin: 4px 0 !important; }
-        .stMarkdown h1 { font-size: 1.75rem !important; margin-bottom: 0.3rem !important; }
+        .stMarkdown h1 { font-size: 1.75rem !important; }
         button { min-height: 48px !important; }
     </style>
 """)
@@ -42,18 +38,20 @@ def get_current():
             'price': data['market_data']['current_price']['usd'],
             'market_cap': data['market_data']['market_cap']['usd'],
         }
-    except:
+    except Exception as e:
+        st.error(f"API Error: {e}")
         return None
 
-@st.cache_data(ttl=3600)
+@st.cache_data(ttl=1800)
 def get_history():
     try:
         url = "https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days=365&interval=daily"
         data = requests.get(url, timeout=20).json()
-        return pd.DataFrame({
+        df = pd.DataFrame({
             'market_cap': [item[1] for item in data.get('market_caps', [])],
             'price': [item[1] for item in data.get('prices', [])]
         })
+        return df
     except:
         return pd.DataFrame()
 
@@ -85,18 +83,18 @@ while True:
         hist = get_history()
 
         if not current:
-            st.error("Loading data...")
+            st.error("⚠️ Unable to fetch price data")
         else:
             price = current['price']
             mcap = current['market_cap']
             current_mvrv = calculate_mvrv(mcap)
 
-            # Price with 8 decimal places
+            # Price with 8 decimals
             st.metric("Price", f"${price:.8f}")
 
             st.divider()
 
-            # Current MVRV
+            # MVRV
             col1, col2 = st.columns([3, 1])
             with col1:
                 st.metric("MVRV", f"{current_mvrv:.2f}" if current_mvrv else "—")
@@ -133,6 +131,8 @@ while True:
                     fig.add_hline(y=REALIZED_CAP/1e9, line_dash="dash", line_color="red")
                     fig.update_layout(height=280, margin=dict(l=10,r=10,t=20,b=10))
                     st.plotly_chart(fig, use_container_width=True)
+                else:
+                    st.info("Loading chart...")
 
             with tab2:
                 if not hist.empty:
@@ -140,6 +140,8 @@ while True:
                     fig2.add_trace(go.Scatter(x=hist.index, y=hist['price'], line=dict(width=2.5)))
                     fig2.update_layout(height=280, margin=dict(l=10,r=10,t=20,b=10))
                     st.plotly_chart(fig2, use_container_width=True)
+                else:
+                    st.info("Loading chart...")
 
     if not auto_refresh:
         break
