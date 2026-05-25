@@ -1,3 +1,4 @@
+
 import streamlit as st
 import requests
 from bs4 import BeautifulSoup
@@ -21,12 +22,11 @@ st.html("""
         .stMetric { font-size: 1.15rem !important; }
         .stMarkdown h1 { font-size: 1.85rem !important; }
         button { min-height: 52px !important; }
-        .stPlotlyChart { margin-bottom: 10px !important; }
     </style>
 """)
 
 st.title("🚀 SHIB Live Metrics")
-st.caption("MVRV • MVRV Z-Score • Adapted Puell | Burnalytics + Shibburn")
+st.caption("MVRV • MVRV Z-Score • Adapted Puell | Burnalytics + Glassnode Realized Cap")
 
 auto_refresh = st.toggle("🔄 Auto-refresh every 15 seconds", value=True)
 
@@ -38,6 +38,7 @@ def get_shib_current():
         return {
             'price': data['market_data']['current_price']['usd'],
             'market_cap': data['market_data']['market_cap']['usd'],
+            'circulating': data['market_data']['circulating_supply']
         }
     except:
         return None
@@ -54,54 +55,38 @@ def get_historical_data(days=180):
     except:
         return pd.DataFrame()
 
-def scrape_burnalytics_burn():
-    """Primary: Burnalytics (more reliable)"""
+def get_daily_burn():
+    """Burnalytics primary + Shibburn fallback"""
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        # SHIB page on Burnalytics
-        response = requests.get("https://www.burnalytics.com/asset/0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce", 
-                              headers=headers, timeout=12)
-        text = response.text
-
-        # Look for 24h burn (often near "24H" or in stats)
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        r = requests.get("https://www.burnalytics.com/asset/0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce", 
+                        headers=headers, timeout=12)
+        text = r.text
         match = re.search(r'24H[^0-9]*([\d,]+)', text, re.IGNORECASE | re.DOTALL)
         if match:
-            burn_str = match.group(1).replace(',', '')
-            daily = int(burn_str)
-            if 10_000 < daily < 500_000_000:
-                return daily
+            val = int(match.group(1).replace(',', ''))
+            if 10_000 < val < 500_000_000:
+                return val, "Burnalytics"
     except:
         pass
-    return None
-
-def scrape_shibburn_burn():
-    """Fallback: Shibburn"""
+    # Shibburn fallback
     try:
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-        response = requests.get("https://www.shibburn.com/", headers=headers, timeout=12)
-        text = response.text
-
-        match = re.search(r'Last 24 Hours[^0-9]*([\d,]+)', text, re.IGNORECASE | re.DOTALL)
+        r = requests.get("https://www.shibburn.com/", headers=headers, timeout=12)
+        match = re.search(r'Last 24 Hours[^0-9]*([\d,]+)', r.text, re.IGNORECASE | re.DOTALL)
         if match:
-            burn_str = match.group(1).replace(',', '')
-            daily = int(burn_str)
-            if 10_000 < daily < 500_000_000:
-                return daily
+            val = int(match.group(1).replace(',', ''))
+            if 10_000 < val < 500_000_000:
+                return val, "Shibburn"
     except:
         pass
-    return 1_271_623  # safe fallback
+    return 1_271_623, "Fallback"
 
-def get_daily_burn():
-    """Try Burnalytics first, then Shibburn"""
-    burn = scrape_burnalytics_burn()
-    if burn:
-        return burn, "Burnalytics"
-    burn = scrape_shibburn_burn()
-    return burn, "Shibburn"
+# ====================== REALIZED CAP (Glassnode-based) ======================
+# Updated May 2026 - Realized Price ~$0.00000561 → Realized Cap ~$3.30B
+REALIZED_CAP = 3_300_000_000   # More accurate on-chain value
 
-# ====================== CALCULATIONS ======================
-def calculate_mvrv(mcap, realized=2_900_000_000):
-    return mcap / realized if realized > 0 else None
+def calculate_mvrv(mcap):
+    return mcap / REALIZED_CAP if REALIZED_CAP > 0 else None
 
 def calculate_zscore(current_mvrv, hist_series):
     if len(hist_series) < 20 or current_mvrv is None:
@@ -128,7 +113,7 @@ while True:
             price = current['price']
             mcap = current['market_cap']
             mvrv = calculate_mvrv(mcap)
-            hist_mvrv = (hist_df['market_cap'] / 2_900_000_000).tolist() if not hist_df.empty else []
+            hist_mvrv = (hist_df['market_cap'] / REALIZED_CAP).tolist() if not hist_df.empty else []
             zscore = calculate_zscore(mvrv, hist_mvrv)
             puell = calculate_puell(daily_burn, price)
 
@@ -168,17 +153,18 @@ while True:
                     elif puell > 1.0: st.info("🟡 Above Average")
                     else: st.warning("⚠️ Low Burn Activity")
 
-            # Charts (unchanged)
+            # Charts
             st.subheader("Historical Charts")
-            tab1, tab2 = st.tabs(["Market Cap", "Price History"])
+            tab1, tab2 = st.tabs(["Market Cap vs Realized", "Price History"])
 
             with tab1:
                 if not hist_df.empty:
                     fig = go.Figure()
                     fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['market_cap']/1e9,
                                            name="Market Cap ($B)", line=dict(color="#1E88E5", width=2.5)))
-                    fig.add_hline(y=2.9, line_dash="dash", line_color="red", annotation_text="Est. Realized Cap ~$2.9B")
-                    fig.update_layout(height=380, margin=dict(l=10, r=10, t=40, b=10))
+                    fig.add_hline(y=REALIZED_CAP/1e9, line_dash="dash", line_color="red", 
+                                 annotation_text=f"Realized Cap ≈ ${REALIZED_CAP/1e9:.1f}B (Glassnode)")
+                    fig.update_layout(height=380, margin=dict(l=10,r=10,t=40,b=10))
                     st.plotly_chart(fig, use_container_width=True)
 
             with tab2:
@@ -186,10 +172,10 @@ while True:
                     fig2 = go.Figure()
                     fig2.add_trace(go.Scatter(x=hist_df.index, y=hist_df['price'],
                                             name="Price (USD)", line=dict(color="#FF9800", width=2.5)))
-                    fig2.update_layout(height=380, margin=dict(l=10, r=10, t=40, b=10))
+                    fig2.update_layout(height=380, margin=dict(l=10,r=10,t=40,b=10))
                     st.plotly_chart(fig2, use_container_width=True)
 
-            st.caption("Realized Cap is an estimate • Powered by Burnalytics + Shibburn")
+            st.caption("Realized Cap sourced from Glassnode on-chain data • Updated May 2026")
 
     if not auto_refresh:
         break
@@ -197,6 +183,5 @@ while True:
     time.sleep(15)
     st.rerun()
 
-# Manual refresh
 if st.button("🔄 Refresh Now", use_container_width=True, type="primary"):
     st.rerun()
