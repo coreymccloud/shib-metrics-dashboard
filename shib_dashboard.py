@@ -31,8 +31,9 @@ auto_refresh = st.toggle("🔄 Auto-refresh every 15 seconds", value=True)
 # ====================== CONSTANTS ======================
 REALIZED_CAP = 3_300_000_000
 
+# Changed 1 Day → 3 Days
 PERIODS = {
-    "1 Day": 1,
+    "3 Days": 3,
     "5 Days": 5,
     "30 Days": 30,
     "90 Days": 90,
@@ -213,7 +214,7 @@ while True:
                     fig2.update_layout(height=380)
                     st.plotly_chart(fig2, use_container_width=True)
 
-            st.caption("Realized Cap from Glassnode • 1 Day uses limited data (more volatile)")
+            st.caption("Realized Cap from Glassnode")
 
     if not auto_refresh:
         break
