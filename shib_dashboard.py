@@ -102,3 +102,51 @@ while True:
             with col1:
                 st.metric("MVRV", f"{cur_mvrv:.2f}" if cur_mvrv else "—")
             with col2:
+                with st.expander("ℹ️", expanded=False):
+                    st.caption("Market Cap / Realized Cap")
+
+            st.divider()
+
+            # Z-Scores - Compact 2-column layout
+            st.subheader("Z-Score")
+            for i in range(0, len(PERIODS), 2):
+                cols = st.columns(2)
+                for j in range(2):
+                    if i + j < len(PERIODS):
+                        label, days = PERIODS[i + j]
+                        with cols[j]:
+                            data = hist.tail(days) if not hist.empty else hist
+                            series = (data['market_cap'] / REALIZED_CAP).tolist() if not data.empty else []
+                            zs = zscore(cur_mvrv, series)
+                            st.metric(label, f"{zs:.2f}" if zs is not None else "—")
+                            st.caption(action(zs))
+
+            st.divider()
+
+            # Compact Charts
+            st.subheader("Charts")
+            tab1, tab2 = st.tabs(["Market Cap", "Price"])
+
+            with tab1:
+                if not hist.empty:
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=hist.index, y=hist['market_cap']/1e9, line=dict(width=2.5)))
+                    fig.add_hline(y=REALIZED_CAP/1e9, line_dash="dash", line_color="red")
+                    fig.update_layout(height=280, margin=dict(l=10,r=10,t=20,b=10))
+                    st.plotly_chart(fig, use_container_width=True)
+
+            with tab2:
+                if not hist.empty:
+                    fig2 = go.Figure()
+                    fig2.add_trace(go.Scatter(x=hist.index, y=hist['price'], line=dict(width=2.5)))
+                    fig2.update_layout(height=280, margin=dict(l=10,r=10,t=20,b=10))
+                    st.plotly_chart(fig2, use_container_width=True)
+
+    if not auto_refresh:
+        break
+
+    time.sleep(15)
+    st.rerun()
+
+if st.button("🔄 Refresh", use_container_width=True, type="primary"):
+    st.rerun()
