@@ -28,25 +28,8 @@ st.caption("MVRV • Multi-Period Z-Score • Adapted Puell | Burnalytics + Glas
 
 auto_refresh = st.toggle("🔄 Auto-refresh every 15 seconds", value=True)
 
-# ====================== SHORT MVRV EXPLANATION ======================
-with st.expander("📘 What is MVRV?", expanded=False):
-    st.markdown("""
-    **MVRV Ratio** = Market Cap ÷ Realized Cap
-
-    - **Market Cap** = Current price × circulating supply
-    - **Realized Cap** = Value of all SHIB at the price when they last moved (on-chain)
-
-    **Interpretation**:
-    - **> 2.5** → Significantly Overvalued (high profit-taking risk)
-    - **1.2 – 2.5** → In Profit Zone
-    - **0.8 – 1.2** → Fair Value
-    - **< 0.8** → Potentially Undervalued
-
-    **MVRV Z-Score** shows how extreme the current MVRV is compared to its history.
-    """)
-
 # ====================== CONSTANTS ======================
-REALIZED_CAP = 3_300_000_000  # Glassnode-based (May 2026)
+REALIZED_CAP = 3_300_000_000
 
 PERIODS = {
     "30 Days": 30,
@@ -143,33 +126,55 @@ while True:
 
             st.divider()
 
-            # MVRV Section with Explanation
-            col_mvrv1, col_mvrv2 = st.columns([3, 1])
-            with col_mvrv1:
-                st.subheader("Current MVRV")
+            # Current MVRV Section
+            st.subheader("Current MVRV")
+            mcol1, mcol2 = st.columns([2, 1])
+            with mcol1:
                 st.metric("MVRV Ratio", f"{current_mvrv:.2f}" if current_mvrv else "—")
-            with col_mvrv2:
-                st.caption("ℹ️ Tap the box above for explanation")
+            with mcol2:
+                with st.expander("What is MVRV?", expanded=False):
+                    st.markdown("""
+                    **MVRV = Market Cap ÷ Realized Cap**
+
+                    - **Market Cap**: Current price × supply  
+                    - **Realized Cap**: Value at last on-chain movement
+
+                    **Guide**: >2.5 Overvalued | 0.8-1.2 Fair | <0.8 Undervalued
+                    """)
 
             st.divider()
 
-            # Multi-Period Z-Scores
+            # ==================== MVRV Z-SCORE SECTION ====================
             st.subheader("MVRV Z-Score by Time Period")
-            zscore_cols = st.columns(4)
+            
+            zcol1, zcol2 = st.columns([3, 1])
+            with zcol1:
+                zscore_cols = st.columns(4)
+                for idx, (label, days) in enumerate(PERIODS.items()):
+                    with zscore_cols[idx]:
+                        period_df = hist_df.tail(days) if not hist_df.empty else hist_df
+                        hist_mvrv = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
+                        zscore = calculate_zscore(current_mvrv, hist_mvrv)
+                        
+                        st.metric(label, f"{zscore:.2f}" if zscore is not None else "—")
+                        
+                        if zscore is not None:
+                            if zscore > 2.0: st.error("🔴 Extreme")
+                            elif zscore > 1.0: st.warning("🟡 Overvalued")
+                            elif zscore < -1.5: st.success("🟢 Strong Buy")
+                            else: st.info("⚪ Neutral")
+            with zcol2:
+                with st.expander("What is MVRV Z-Score?", expanded=False):
+                    st.markdown("""
+                    **Z-Score = (Current MVRV − Historical Average) ÷ Standard Deviation**
 
-            for idx, (label, days) in enumerate(PERIODS.items()):
-                with zscore_cols[idx]:
-                    period_df = hist_df.tail(days) if not hist_df.empty else hist_df
-                    hist_mvrv = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
-                    zscore = calculate_zscore(current_mvrv, hist_mvrv)
-                    
-                    st.metric(label, f"{zscore:.2f}" if zscore is not None else "—")
-                    
-                    if zscore is not None:
-                        if zscore > 2.0: st.error("🔴 Extreme")
-                        elif zscore > 1.0: st.warning("🟡 Overvalued")
-                        elif zscore < -1.5: st.success("🟢 Strong Buy")
-                        else: st.info("⚪ Neutral")
+                    Shows **how extreme** today's MVRV is compared to the chosen period.
+
+                    - **> +2.0** → Extremely Overvalued
+                    - **+1.0 to +2.0** → Overvalued
+                    - **-1.5 to -1.0** → Undervalued
+                    - **< -2.0** → Extremely Undervalued (Strong Buy)
+                    """)
 
             st.divider()
 
