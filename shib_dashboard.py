@@ -111,11 +111,9 @@ while True:
             current_mvrv = calculate_mvrv(mcap)
 
             # Top Row
-            col1, col2 = st.columns(2)
+            col1 = st.columns(1)
             with col1:
                 st.metric("Price", f"${price:.10f}")
-            with col2:
-                st.metric("24h Burn", f"{daily_burn:,.0f} SHIB", delta=f"via {source}")
 
             # ... (rest of your dashboard remains the same as previous version)
 
