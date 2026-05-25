@@ -163,16 +163,16 @@ while True:
             
             zcol1, zcol2 = st.columns([3, 1])
             with zcol1:
-                zscore_cols = st.columns(6)
+                zscore_cols = st.columns(3)  # 3 columns for better mobile layout with 6 periods
                 for idx, (label, days) in enumerate(PERIODS.items()):
-                    with zscore_cols[idx]:
+                    col_idx = idx % 3
+                    with zscore_cols[col_idx]:
                         period_df = hist_df.tail(days) if not hist_df.empty else hist_df
                         hist_mvrv = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
                         zscore = calculate_zscore(current_mvrv, hist_mvrv)
                         
                         st.metric(label, f"{zscore:.2f}" if zscore is not None else "—")
-                        action = get_zscore_action(zscore)
-                        st.caption(action)
+                        st.caption(get_zscore_action(zscore))
 
             with zcol2:
                 with st.expander("What is MVRV Z-Score?", expanded=False):
