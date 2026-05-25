@@ -32,6 +32,8 @@ auto_refresh = st.toggle("🔄 Auto-refresh every 15 seconds", value=True)
 REALIZED_CAP = 3_300_000_000
 
 PERIODS = {
+    "1 Day": 1,
+    "5 Days": 5,
     "30 Days": 30,
     "90 Days": 90,
     "180 Days": 180,
