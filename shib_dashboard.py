@@ -90,8 +90,6 @@ if price is not None and supply_data:
             value=f"{supply_data['burn_percentage']:.4f}%"
         )
 
-    st.divider()
-
 else:
     st.error("Failed to fetch data. Make sure your Etherscan API key is correct.")
 
