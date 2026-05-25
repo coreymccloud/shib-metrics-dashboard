@@ -96,7 +96,7 @@ while True:
             mcap = current['market_cap']
             current_mvrv = calculate_mvrv(mcap)
 
-            st.metric("**Current Price**", f"${price:.8f}")
+            st.metric("**Current Price**", f"${price:.10f}")
 
             st.divider()
 
