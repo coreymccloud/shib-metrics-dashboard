@@ -100,15 +100,15 @@ def get_zscore_action(zscore):
     if zscore is None:
         return ""
     if zscore > 2.0:
-        return "🔴 Strong Sell / Top Signal"
+        return "🔴 Extremely Overvalued, Strong Sell / Top Signal"
     elif zscore > 1.0:
-        return "🟡 Take Profits"
+        return "🟡 Overvalued, Caution / Take Profits"
     elif zscore < -1.5:
-        return "🟢 Strong Buy / Accumulate"
+        return "🟢 Extremely Undervalued, Strong Buy / Bottom Signal"
     elif zscore < -1.0:
-        return "🟢 Buy Zone"
+        return "🟢 Undervalued, Good Buy Zone"
     else:
-        return "⚪ Hold / Neutral"
+        return "⚪ Fair Value, Hold"
 
 def calculate_puell(daily_burn, price):
     daily_val = daily_burn * price
