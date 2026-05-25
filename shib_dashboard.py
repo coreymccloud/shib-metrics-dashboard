@@ -24,13 +24,14 @@ st.html("""
 """)
 
 st.title("🚀 SHIB Live Metrics")
-st.caption("MVRV • Multi-Period Z-Score • Adapted Puell | Improved Burn Scraper")
+st.caption("MVRV • Multi-Period Z-Score • Adapted Puell | Burnalytics + Glassnode")
 
 auto_refresh = st.toggle("🔄 Auto-refresh every 15 seconds", value=True)
 
 # ====================== CONSTANTS ======================
 REALIZED_CAP = 3_300_000_000
 
+# Strictly ascending order
 PERIODS = [
     ("3 Days", 3),
     ("5 Days", 5),
@@ -65,44 +66,26 @@ def get_historical_data(days=365):
         return pd.DataFrame()
 
 def get_daily_burn():
-    """Improved robust scraper - tries multiple patterns"""
-    headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
-
-    # 1. Shibburn (Primary - most reliable right now)
-    try:
-        r = requests.get("https://www.shibburn.com/", headers=headers, timeout=15)
-        text = r.text
-
-        # Multiple fallback patterns for "Last 24 Hours"
-        patterns = [
-            r'Last 24 Hours[^0-9]*([\d,]+)',           # Original
-            r'Last 24 Hours.*?>?([\d,]+)',             # More flexible
-            r'24 Hours[^0-9]*([\d,]+)',                # Alternative label
-        ]
-
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
-            if match:
-                val = int(match.group(1).replace(',', ''))
-                if 10_000 < val < 500_000_000:
-                    return val, "Shibburn"
-    except:
-        pass
-
-    # 2. Burnalytics fallback
+    headers = {'User-Agent': 'Mozilla/5.0'}
     try:
         r = requests.get("https://www.burnalytics.com/asset/0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce", 
-                        headers=headers, timeout=15)
-        text = r.text
-        match = re.search(r'24H[^0-9]*([\d,]+)', text, re.IGNORECASE | re.DOTALL)
+                        headers=headers, timeout=12)
+        match = re.search(r'24H[^0-9]*([\d,]+)', r.text, re.IGNORECASE | re.DOTALL)
         if match:
             val = int(match.group(1).replace(',', ''))
             if 10_000 < val < 500_000_000:
                 return val, "Burnalytics"
     except:
         pass
-
-    # Safe fallback
+    try:
+        r = requests.get("https://www.shibburn.com/", headers=headers, timeout=12)
+        match = re.search(r'Last 24 Hours[^0-9]*([\d,]+)', r.text, re.IGNORECASE | re.DOTALL)
+        if match:
+            val = int(match.group(1).replace(',', ''))
+            if 10_000 < val < 500_000_000:
+                return val, "Shibburn"
+    except:
+        pass
     return 1_271_623, "Fallback"
 
 # ====================== CALCULATIONS ======================
@@ -158,11 +141,9 @@ while True:
             with col2:
                 st.metric("24h Burn", f"{daily_burn:,.0f} SHIB", delta=f"via {source}")
 
-            # ... (rest of your dashboard remains the same as previous version)
-
             st.divider()
 
-            # Current MVRV (unchanged)
+            # Current MVRV
             st.subheader("Current MVRV")
             mcol1, mcol2 = st.columns([2, 1])
             with mcol1:
@@ -178,21 +159,56 @@ while True:
 
             st.divider()
 
-            # Z-Score Section (unchanged)
+            # MVRV Z-Score - ASCENDING ORDER (Fixed)
             st.subheader("MVRV Z-Score by Time Period")
-            zcol1, zcol2 = st.columns([3, 1])
-            with zcol1:
-                zscore_cols = st.columns(3)
-                for idx, (label, days) in enumerate(PERIODS):
-                    with zscore_cols[idx % 3]:
-                        period_df = hist_df.tail(days) if not hist_df.empty else hist_df
-                        hist_mvrv = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
-                        zscore = calculate_zscore(current_mvrv, hist_mvrv)
-                        
-                        st.metric(label, f"{zscore:.2f}" if zscore is not None else "—")
-                        st.caption(get_zscore_action(zscore))
+            
+            # Use 2 rows of 3 columns for clean ascending display
+            for row in range(2):
+                cols = st.columns(3)
+                for i in range(3):
+                    idx = row * 3 + i
+                    if idx < len(PERIODS):
+                        label, days = PERIODS[idx]
+                        with cols[i]:
+                            period_df = hist_df.tail(days) if not hist_df.empty else hist_df
+                            hist_mvrv = (period_df['market_cap'] / REALIZED_CAP).tolist() if not period_df.empty else []
+                            zscore = calculate_zscore(current_mvrv, hist_mvrv)
+                            
+                            st.metric(label, f"{zscore:.2f}" if zscore is not None else "—")
+                            st.caption(get_zscore_action(zscore))
 
-            # ... rest of the code (Puell + Charts) remains the same
+            st.divider()
+
+            # Puell
+            puell = calculate_puell(daily_burn, price)
+            st.subheader("🔥 Adapted Puell Multiple")
+            st.metric("Puell", f"{puell:.2f}" if puell else "—")
+            if puell:
+                if puell > 1.8: st.success("High Burn Pressure → Bullish")
+                elif puell > 1.0: st.info("Above Average")
+                else: st.warning("Low Burn Activity")
+
+            # Charts
+            st.subheader("Historical Charts")
+            tab1, tab2 = st.tabs(["Market Cap vs Realized", "Price History"])
+
+            with tab1:
+                if not hist_df.empty:
+                    fig = go.Figure()
+                    fig.add_trace(go.Scatter(x=hist_df.index, y=hist_df['market_cap']/1e9,
+                                           name="Market Cap ($B)", line=dict(color="#1E88E5", width=2.5)))
+                    fig.add_hline(y=REALIZED_CAP/1e9, line_dash="dash", line_color="red",
+                                 annotation_text=f"Realized ≈ ${REALIZED_CAP/1e9:.1f}B")
+                    fig.update_layout(height=380)
+                    st.plotly_chart(fig, use_container_width=True)
+
+            with tab2:
+                if not hist_df.empty:
+                    fig2 = go.Figure()
+                    fig2.add_trace(go.Scatter(x=hist_df.index, y=hist_df['price'],
+                                            name="Price (USD)", line=dict(color="#FF9800", width=2.5)))
+                    fig2.update_layout(height=380)
+                    st.plotly_chart(fig2, use_container_width=True)
 
             st.caption("Realized Cap from Glassnode")
 
