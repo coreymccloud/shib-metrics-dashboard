@@ -100,13 +100,11 @@ if price is not None and supply_data:
     st.divider()
 
     st.subheader("Supply & Burn Details")
-    col_a, col_b, col_c = st.columns(3)
+    col_a, col_b, = st.columns(2)
     with col_a:
         st.metric("Total Supply", f"{supply_data['total_supply']:,.0f}")
     with col_b:
-        st.metric("Tokens Burned", f"{supply_data['burned']:,.0f}")
-    with col_c:
-        st.metric("Remaining Supply", f"{supply_data['total_supply'] - supply_data['burned']:,.0f}")
+        st.metric("Tokens Burned", f"{supply_data['burned']:,.4f}")
 
     st.success(f"✅ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
     st.caption("Price: DexScreener • Supply & Burn: Etherscan API V2 (on-chain)")
