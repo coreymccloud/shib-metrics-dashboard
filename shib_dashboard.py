@@ -94,11 +94,5 @@ with col2:
     burn_data = fetch_burn_from_shibburn()
     if burn_data["burn_percentage"] is not None:
         st.metric("Burned %", f"{burn_data['burn_percentage']:.2f}%")
-        if burn_data["burned"]:
-            st.caption(f"Total Burned: {burn_data['burned']:,} SHIB")
     else:
         st.metric("Burned %", "Loading...")
-
-st.divider()
-
-st.info("💡 Burn data is now sourced from Shibburn.com (the community standard tracker).")
