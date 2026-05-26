@@ -50,15 +50,15 @@ def fetch_burn_from_shibburn():
         resp = requests.get(url, headers=headers, timeout=20)
         html = resp.text
 
-        # Total Burned % → "Total Burned 41.08%"
+        # Total Burned %  →  "Total Burned 41.08%"
         percent_match = re.search(r'Total Burned\s*(\d+\.\d+)%', html)
         burn_percentage = float(percent_match.group(1)) if percent_match else None
 
-        # 24h Burn → "Last 24 Hours" followed by number
+        # 24h Burn → "Last 24 Hours" then the number
         burn_24h_match = re.search(r'Last 24 Hours[\s\S]*?(\d{1,3}(?:,\d{3})*)', html)
         burn_24h = int(burn_24h_match.group(1).replace(',', '')) if burn_24h_match else None
 
-        # 7d Burn → "Last 7 Days" followed by number
+        # 7d Burn → "Last 7 Days" then the number
         burn_7d_match = re.search(r'Last 7 Days[\s\S]*?(\d{1,3}(?:,\d{3})*)', html)
         burn_7d = int(burn_7d_match.group(1).replace(',', '')) if burn_7d_match else None
 
@@ -141,7 +141,7 @@ with col1:
 
 with col2:
     burn_data = fetch_burn_from_shibburn()
-    if burn_data["burn_percentage"] is not None:
+    if burn_data.get("burn_percentage") is not None:
         st.metric("Total Burned %", f"{burn_data['burn_percentage']:.2f}%")
         
         subcol1, subcol2 = st.columns(2)
