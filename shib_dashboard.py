@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# Auto-refresh every 15 seconds
+# JavaScript Auto-refresh every 15 seconds
 st.markdown("""
     <script>
         function autoRefresh() {
@@ -40,29 +40,30 @@ def fetch_price_dexscreener():
     except:
         return None
 
+
 def fetch_burn_from_shibburn():
     try:
         url = "https://www.shibburn.com/"
         headers = {"User-Agent": "Mozilla/5.0 (compatible; SHIB-Tracker/1.0)"}
         resp = requests.get(url, headers=headers, timeout=15)
         html = resp.text
-        
+
         # Total Burned %
         percent_match = re.search(r'Total Burned\s*(\d+\.\d+)%', html)
-        burned_match = re.search(r'Total Burned[^0-9]*([\d,]+)', html)
-        
+        # Total Burned amount
+        burned_match = re.search(r'Total Burned\s*[\s\S]*?(\d{1,3}(?:,\d{3})*)', html)
+
         burn_percentage = float(percent_match.group(1)) if percent_match else None
-        burned = int(burned_match.group(1).replace(',', '')) * 10**0 if burned_match else None
-        
-        # === IMPROVED 24h & 7d Burn Scraping ===
-        # Last 24 Hours
-        burn_24h_match = re.search(r'Last 24 Hours\s*[\s\S]*?([\d,]+)', html)
+        burned = int(burned_match.group(1).replace(',', '')) if burned_match else None
+
+        # 24h Burn
+        burn_24h_match = re.search(r'Last 24 Hours\s*[\s\S]*?(\d{1,3}(?:,\d{3})*)', html)
         burn_24h = int(burn_24h_match.group(1).replace(',', '')) if burn_24h_match else None
-        
-        # Last 7 Days
-        burn_7d_match = re.search(r'Last 7 Days\s*[\s\S]*?([\d,]+)', html)
+
+        # 7d Burn
+        burn_7d_match = re.search(r'Last 7 Days\s*[\s\S]*?(\d{1,3}(?:,\d{3})*)', html)
         burn_7d = int(burn_7d_match.group(1).replace(',', '')) if burn_7d_match else None
-        
+
         return {
             "burn_percentage": burn_percentage,
             "burned": burned,
@@ -73,7 +74,6 @@ def fetch_burn_from_shibburn():
         st.error(f"Burn data fetch error: {e}")
         return {"burn_percentage": None, "burned": None, "burn_24h": None, "burn_7d": None}
 
-# ... [Rest of your functions remain the same - fetch_historical_prices, calculate_mvrv_z_score, etc.]
 
 @lru_cache(maxsize=5)
 def fetch_historical_prices(days=365):
@@ -93,6 +93,7 @@ def fetch_historical_prices(days=365):
     except:
         return pd.DataFrame()
 
+
 def calculate_mvrv_z_score(prices: pd.Series, period: int):
     if len(prices) < max(period * 2, 30):
         return None
@@ -103,6 +104,7 @@ def calculate_mvrv_z_score(prices: pd.Series, period: int):
         return 0.0
     z_score = (current - mean) / std
     return round(z_score, 2)
+
 
 @lru_cache(maxsize=10)
 def fetch_coingecko_data():
@@ -117,6 +119,7 @@ def fetch_coingecko_data():
     except:
         return None
 
+
 def fetch_shibarium_tvl():
     try:
         resp = requests.get("https://api.llama.fi/chains", timeout=10)
@@ -127,6 +130,7 @@ def fetch_shibarium_tvl():
         return None, None
     except:
         return None, None
+
 
 # ================== MAIN DISPLAY ==================
 col1, col2, col3 = st.columns(3)
@@ -166,11 +170,54 @@ with col3:
     else:
         st.metric("24h Volume", "Loading...")
 
-# ================== MVRV Z-SCORE & ECOSYSTEM SECTIONS (unchanged) ==================
-# [Copy the rest of the code from my previous full version - MVRV, Ecosystem, etc.]
-
+# ================== MVRV Z-SCORE SECTION ==================
 st.subheader("📊 MVRV Z-Score (Price-Based Approximation)")
-# ... (keep the rest exactly as in the previous full code)
+st.caption("True on-chain Realized Cap for ERC-20s like SHIB is not freely available. This uses rolling price statistics.")
+
+df_hist = fetch_historical_prices(days=365)
+
+if not df_hist.empty:
+    current_mcap = df_hist['market_cap'].iloc[-1]
+    st.metric("Current Market Cap", f"${current_mcap:,.0f}")
+    
+    periods = [3, 7, 30, 90, 180]
+    cols = st.columns(len(periods))
+    
+    for idx, p in enumerate(periods):
+        z = calculate_mvrv_z_score(df_hist['price'], p)
+        with cols[idx]:
+            if z is not None:
+                if z > 2.0:
+                    delta = "Overvalued"
+                    color = "inverse"
+                elif z < -1.5:
+                    delta = "Undervalued"
+                    color = "normal"
+                else:
+                    delta = "Neutral"
+                    color = "normal"
+                st.metric(f"{p}d Z-Score", f"{z:.2f}", delta=delta, delta_color=color)
+            else:
+                st.metric(f"{p}d Z-Score", "N/A")
+else:
+    st.warning("Could not load historical data for MVRV calculation.")
 
 # ================== ECOSYSTEM METRICS ==================
-# ... (keep as before)
+st.subheader("🌐 Ecosystem & Activity Metrics")
+
+tvl, tvl_24h = fetch_shibarium_tvl()
+col_a, col_b, col_c = st.columns(3)
+
+with col_a:
+    if tvl is not None:
+        st.metric("Shibarium TVL", f"${tvl:,.0f}", f"{tvl_24h:.1f}% 24h")
+    else:
+        st.metric("Shibarium TVL", "N/A")
+
+with col_b:
+    st.info("**Burn Activity**\n24h / 7d burns updated live from Shibburn")
+
+with col_c:
+    st.info("**Decision Signals**\n• Low Z-Score + Rising Burns/TVL = **Buy**\n• High Z-Score + Declining Activity = **Sell**")
+
+st.caption("**Disclaimer**: SHIB is a high-risk meme coin. These metrics are for informational purposes only. Always DYOR and manage risk.")
