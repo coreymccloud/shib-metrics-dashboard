@@ -21,17 +21,17 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🐕 Shiba Inu (SHIB) Burn & Price Tracker")
-st.caption("🔄 Auto-refreshes every 15s • DexScreener + Etherscan (On-Chain) + CoinGecko + DefiLlama")
+st.caption("🔄 Auto-refreshes every 15s • DexScreener + Etherscan On-Chain + CoinGecko + DefiLlama")
 
 # ================== API KEYS & CONSTANTS ==================
 ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "S1JBXUTRAPY3WGTA5ZA4N7IRZEFVR25ZIC")
 SHIB_CONTRACT = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"
 
-# Updated Burn Addresses (main one has ~410T SHIB)
+# Correct Burn Addresses (case-insensitive but using standard format)
 BURN_ADDRESSES = [
-    "0xdEAD000000000000000042069420694206942069",  # Primary (Vitalik's burn address)
-    "0x000000000000000000000000000000000000dead",  # Null
-    "0x0000000000000000000000000000000000000000",  # Zero
+    "0xdead000000000000000042069420694206942069",   # Main Vitalik-style burn (holds ~410T)
+    "0x000000000000000000000000000000000000dead",
+    "0x0000000000000000000000000000000000000000",
 ]
 
 # ================== FETCH FUNCTIONS ==================
@@ -49,39 +49,32 @@ def fetch_price_dexscreener():
 
 
 def fetch_burn_from_etherscan():
-    """On-chain accurate burn data"""
+    """On-chain burned tokens from main dead addresses"""
     try:
         total_burned = 0.0
 
         for addr in BURN_ADDRESSES:
-            url = (
-                f"https://api.etherscan.io/api"
-                f"?module=account"
-                f"&action=tokenbalance"
-                f"&contractaddress={SHIB_CONTRACT}"
-                f"&address={addr}"
-                f"&tag=latest"
-                f"&apikey={ETHERSCAN_API_KEY}"
-            )
+            url = f"https://api.etherscan.io/api?module=account&action=tokenbalance&contractaddress={SHIB_CONTRACT}&address={addr}&tag=latest&apikey={ETHERSCAN_API_KEY}"
             resp = requests.get(url, timeout=12).json()
             
             if resp.get("status") == "1" and resp.get("result"):
-                balance = int(resp["result"]) / 1e18
+                balance = int(resp["result"]) / 1e18   # SHIB has 18 decimals
                 total_burned += balance
+            else:
+                # Fallback message for rate limit / deprecated
+                if "deprecated" in str(resp.get("message", "")).lower():
+                    st.warning("Etherscan API note: Using free tier.")
 
-        # Accurate percentage calculation
         initial_supply = 1_000_000_000_000_000  # 1 Quadrillion
         burn_percentage = round((total_burned / initial_supply) * 100, 2)
 
         return {
             "burn_percentage": burn_percentage,
-            "burned": int(total_burned),
-            "burn_24h": None,
-            "burn_7d": None
+            "burned": int(total_burned)
         }
     except Exception as e:
-        st.error(f"Etherscan error: {str(e)[:120]}")
-        return {"burn_percentage": None, "burned": None, "burn_24h": None, "burn_7d": None}
+        st.error(f"Etherscan error: {str(e)[:100]}")
+        return {"burn_percentage": None, "burned": None}
 
 
 @lru_cache(maxsize=5)
@@ -153,9 +146,8 @@ with col1:
 
 with col2:
     burn_data = fetch_burn_from_etherscan()
-    if burn_data["burn_percentage"] is not None:
+    if burn_data["burn_percentage"] is not None and burn_data["burn_percentage"] > 0:
         st.metric("Total Burned %", f"{burn_data['burn_percentage']:.2f}%")
-        
         subcol1, subcol2 = st.columns(2)
         with subcol1:
             st.metric("24h Burn", "Coming Soon")
@@ -172,9 +164,9 @@ with col3:
     else:
         st.metric("24h Volume", "Loading...")
 
-# ================== MVRV Z-SCORE SECTION ==================
+# ================== MVRV + ECOSYSTEM (unchanged) ==================
 st.subheader("📊 MVRV Z-Score (Price-Based Approximation)")
-st.caption("True on-chain Realized Cap for ERC-20s like SHIB is not freely available. This uses rolling price statistics.")
+st.caption("True on-chain Realized Cap for ERC-20s like SHIB is not freely available.")
 
 df_hist = fetch_historical_prices(days=365)
 
@@ -184,42 +176,28 @@ if not df_hist.empty:
     
     periods = [3, 7, 30, 90, 180]
     cols = st.columns(len(periods))
-    
     for idx, p in enumerate(periods):
         z = calculate_mvrv_z_score(df_hist['price'], p)
         with cols[idx]:
             if z is not None:
-                if z > 2.0:
-                    delta = "Overvalued"
-                    color = "inverse"
-                elif z < -1.5:
-                    delta = "Undervalued"
-                    color = "normal"
-                else:
-                    delta = "Neutral"
-                    color = "normal"
-                st.metric(f"{p}d Z-Score", f"{z:.2f}", delta=delta, delta_color=color)
+                delta = "Overvalued" if z > 2 else "Undervalued" if z < -1.5 else "Neutral"
+                st.metric(f"{p}d Z-Score", f"{z:.2f}", delta=delta)
             else:
                 st.metric(f"{p}d Z-Score", "N/A")
-else:
-    st.warning("Could not load historical data for MVRV calculation.")
 
-# ================== ECOSYSTEM METRICS ==================
+# Ecosystem section
 st.subheader("🌐 Ecosystem & Activity Metrics")
-
 tvl, tvl_24h = fetch_shibarium_tvl()
 col_a, col_b, col_c = st.columns(3)
 
 with col_a:
-    if tvl is not None:
+    if tvl:
         st.metric("Shibarium TVL", f"${tvl:,.0f}", f"{tvl_24h:.1f}% 24h")
-    else:
-        st.metric("Shibarium TVL", "N/A")
 
 with col_b:
-    st.info("**Burn Data**: Direct on-chain from Etherscan")
+    st.info("**Burn Data**: On-chain from Etherscan")
 
 with col_c:
-    st.info("**Decision Signals**\n• Low Z-Score + Rising Burns/TVL = **Buy**\n• High Z-Score + Declining Activity = **Sell**")
+    st.info("**Decision Signals**\n• Low Z + Rising TVL = **Buy**\n• High Z = **Sell**")
 
-st.caption("**Burn Source**: Etherscan API (on-chain balances) • Stable & Accurate")
+st.caption("**Note**: If Total Burned % still shows 0, your Etherscan key may have rate limits. Try adding a better free key in secrets.")
