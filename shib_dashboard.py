@@ -86,7 +86,7 @@ col1, col2 = st.columns(2)
 with col1:
     price = fetch_price_dexscreener()
     if price:
-        st.metric("SHIB Price (USD)", f"${price:.10f}")
+        st.metric("SHIB Price (USD)", f"${price:.8f}")
     else:
         st.metric("SHIB Price", "Loading...")
 
