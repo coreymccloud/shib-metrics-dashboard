@@ -77,7 +77,7 @@ price = fetch_price_dexscreener()
 supply_data = fetch_supply_and_burn()
 
 if price is not None and supply_data:
-    col1, col2 = st.columns(2)
+    col1, col2, col3 = st.columns(3)
     
     with col1:
         st.metric(
@@ -88,7 +88,12 @@ if price is not None and supply_data:
     with col2:
         st.metric(
             label="🔥 Total Burn Percentage",
-            value=f"{supply_data['burn_percentage']:.4f}%",
+            value=f"{supply_data['burn_percentage']:.4f}%"
+        )
+
+    with col3:
+        st.metric(
+            label="🔥 Total Burned",
             value=f"{supply_data['burned']:.0f}"
         )
 
