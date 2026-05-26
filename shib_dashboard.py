@@ -1,9 +1,9 @@
 import streamlit as st
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 import re
+import pandas as pd
 import numpy as np
-from collections import defaultdict
 
 # ========================= CONFIG =========================
 st.set_page_config(
@@ -25,18 +25,12 @@ st.markdown("""
 st.title("🐕 Shiba Inu (SHIB) Burn & Price Tracker")
 st.caption("🔄 Auto-refreshes every 15s • DexScreener + Shibburn")
 
-# ================== ETHERSCAN API KEY ==================
+# ================== ETHERSCAN API KEY (still needed for other features if you keep them) ==================
 ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "S1JBXUTRAPY3WGTA5ZA4N7IRZEFVR25ZIC")
 
 # SHIB Contract on Ethereum (chainid=1)
 SHIB_CONTRACT = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"
 CHAIN_ID = 1
-
-# Main burn addresses
-BURN_ADDRESSES = [
-    "0x000000000000000000000000000000000000dead",
-    "0xdead000000000000000042069420694206942069"
-]
 
 def fetch_price_dexscreener():
     try:
@@ -55,6 +49,7 @@ def fetch_price_dexscreener():
 def fetch_burn_from_shibburn():
     """Fetch burn percentage and total burned from Shibburn (powered by Burnalytics)"""
     try:
+        # Shibburn.com displays the data directly
         url = "https://www.shibburn.com/"
         headers = {
             "User-Agent": "Mozilla/5.0 (compatible; SHIB-Tracker/1.0)"
@@ -62,14 +57,16 @@ def fetch_burn_from_shibburn():
         resp = requests.get(url, headers=headers, timeout=15)
         html = resp.text
         
+        # Look for Total Burned percentage (e.g. "41.08%")
         percent_match = re.search(r'(\d+\.\d+)%', html)
-        burned_match = re.search(r'Total Burned[^0-9]*([\d,]+)', html)
+        burned_match = re.search(r'Total Burned[^0-9]*([\d,]+)', html.replace(',', ''))
         
         burn_percentage = float(percent_match.group(1)) if percent_match else None
-        burned_str = burned_match.group(1).replace(',', '') if burned_match else None
-        burned = int(burned_str) if burned_str else None
+        burned_str = burned_match.group(1) if burned_match else None
+        burned = int(burned_str.replace(',', '')) * 10**12 if burned_str else None  # rough parse, adjust if needed
         
         if burn_percentage is None:
+            # Fallback: try Burnalytics asset page
             url2 = f"https://www.burnalytics.com/asset/{SHIB_CONTRACT}"
             resp2 = requests.get(url2, headers=headers, timeout=10)
             html2 = resp2.text
@@ -85,50 +82,34 @@ def fetch_burn_from_shibburn():
         st.error(f"Shibburn fetch error: {e}")
         return {"burn_percentage": None, "burned": None}
 
-def fetch_historical_burns(days=180):
-    """Fetch approximate daily burns using Etherscan token tx (limited but works for Z-score)"""
-    try:
-        daily_burns = defaultdict(int)
-        end_block = "latest"
-        
-        for addr in BURN_ADDRESSES:
-            url = f"https://api.etherscan.io/api?module=account&action=tokentx&contractaddress={SHIB_CONTRACT}&address={addr}&startblock=0&endblock={end_block}&sort=desc&apikey={ETHERSCAN_API_KEY}"
-            resp = requests.get(url, timeout=15).json()
-            
-            if resp.get('status') == '1' and resp.get('result'):
-                for tx in resp['result']:
-                    ts = int(tx['timeStamp'])
-                    date = datetime.fromtimestamp(ts).date()
-                    value = int(tx['value']) // 10**18  # SHIB has 18 decimals
-                    if date >= (datetime.now().date() - timedelta(days=days)):
-                        daily_burns[date] += value
-        
-        # Convert to list of daily burns (sorted)
-        sorted_dates = sorted(daily_burns.keys())
-        burns_list = [daily_burns[d] for d in sorted_dates]
-        
-        return burns_list
-    except:
-        return []
 
-def calculate_z_score(burns_list, period_days):
-    """Calculate Z-score for recent burn vs historical mean/std for the period"""
-    if len(burns_list) < period_days * 2:  # Need enough history
+def fetch_historical_prices(days=365):
+    """Fetch historical daily prices from CoinGecko for MVRV Z-score approximation"""
+    try:
+        url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days={days}&interval=daily"
+        resp = requests.get(url, timeout=15)
+        data = resp.json()
+        prices = data.get('prices', [])
+        df = pd.DataFrame(prices, columns=['timestamp', 'price'])
+        df['date'] = pd.to_datetime(df['timestamp'], unit='ms').dt.date
+        df = df.drop_duplicates(subset='date').set_index('date')
+        return df['price']
+    except:
+        return pd.Series()
+
+
+def calculate_mvrv_z_score(prices: pd.Series, period: int):
+    """Approximate MVRV Z-Score using price data over rolling periods"""
+    if len(prices) < period:
         return None
-    
-    # Recent average (last period_days)
-    recent = np.mean(burns_list[-period_days:]) if burns_list else 0
-    
-    # Historical mean and std (excluding the most recent period to avoid bias)
-    historical = burns_list[:-period_days]
-    if len(historical) < 10:
-        return None
-    
-    mean_hist = np.mean(historical)
-    std_hist = np.std(historical) if np.std(historical) > 0 else 1
-    
-    z_score = (recent - mean_hist) / std_hist if std_hist > 0 else 0
+    mean = prices.rolling(window=period).mean().iloc[-1]
+    std = prices.rolling(window=period).std().iloc[-1]
+    current_price = prices.iloc[-1]
+    if std == 0:
+        return 0.0
+    z_score = (current_price - mean) / std
     return round(z_score, 2)
+
 
 # ================== MAIN DISPLAY ==================
 col1, col2 = st.columns(2)
@@ -147,31 +128,28 @@ with col2:
     else:
         st.metric("Burned %", "Loading...")
 
-# ================== Z-SCORE SECTION ==================
-st.divider()
-st.subheader("🔥 Burn Rate Z-Scores")
+# ================== MVRV Z-SCORE SECTION ==================
+st.subheader("📊 MVRV Z-Score (Price-Based Approximation)")
+st.caption("Calculated using rolling mean & std dev of historical prices (CoinGecko)")
 
-# Fetch historical burns once
-with st.spinner("Calculating Z-Scores from historical burn data..."):
-    historical_burns = fetch_historical_burns(days=180)
+prices_365 = fetch_historical_prices(days=365)  # Fetch enough history
 
-periods = {
-    "3 Days": 3,
-    "7 Days": 7,
-    "30 Days": 30,
-    "90 Days": 90,
-    "180 Days": 180
-}
-
-z_cols = st.columns(len(periods))
-
-for i, (label, days) in enumerate(periods.items()):
-    with z_cols[i]:
-        z = calculate_z_score(historical_burns, days)
+if not prices_365.empty:
+    periods = [3, 7, 30, 90, 180]
+    z_scores = {}
+    
+    for p in periods:
+        z = calculate_mvrv_z_score(prices_365, p)
+        z_scores[p] = z
+    
+    # Display in columns
+    cols = st.columns(len(periods))
+    for idx, p in enumerate(periods):
+        z = z_scores[p]
         if z is not None:
-            delta = "🚀 High" if z > 1.5 else "📉 Low" if z < -1.5 else "Normal"
-            st.metric(label, f"{z}", delta=delta)
+            delta = "Overvalued" if z > 2 else "Undervalued" if z < -2 else "Neutral"
+            cols[idx].metric(f"{p}d MVRV Z", f"{z}", delta=delta)
         else:
-            st.metric(label, "—", delta="Insufficient data")
-
-st.caption("Z-Score measures how unusual the recent burn rate is compared to history (higher = hotter burns). Data from Etherscan burn transactions.")
+            cols[idx].metric(f"{p}d MVRV Z", "N/A")
+else:
+    st.warning("Could not fetch historical price data for MVRV Z-score calculation.")
