@@ -1,6 +1,7 @@
 import streamlit as st
 import requests
 from datetime import datetime
+import re
 
 # ========================= CONFIG =========================
 st.set_page_config(
@@ -20,21 +21,14 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🐕 Shiba Inu (SHIB) Burn & Price Tracker")
-st.caption("🔄 Auto-refreshes every 15s • DexScreener + Etherscan V2")
+st.caption("🔄 Auto-refreshes every 15s • DexScreener + Shibburn")
 
-# ================== ETHERSCAN API KEY ==================
-# Get free key here: https://etherscan.io/apidashboard
-ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "S1JBXUTRAPY3WGTA5ZA4N7IRZEFVR25ZIC")  # Replace with your key
+# ================== ETHERSCAN API KEY (still needed for other features if you keep them) ==================
+ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "S1JBXUTRAPY3WGTA5ZA4N7IRZEFVR25ZIC")
 
 # SHIB Contract on Ethereum (chainid=1)
 SHIB_CONTRACT = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"
 CHAIN_ID = 1
-
-# Main burn addresses
-BURN_ADDRESSES = [
-    "0x000000000000000000000000000000000000dead",
-    "0xdead000000000000000042069420694206942069"
-]
 
 def fetch_price_dexscreener():
     try:
@@ -50,54 +44,61 @@ def fetch_price_dexscreener():
     except:
         return None
 
-def fetch_supply_and_burn():
+def fetch_burn_from_shibburn():
+    """Fetch burn percentage and total burned from Shibburn (powered by Burnalytics)"""
     try:
-        base_url = "https://api.etherscan.io/v2/api"
+        # Shibburn.com displays the data directly
+        url = "https://www.shibburn.com/"
+        headers = {
+            "User-Agent": "Mozilla/5.0 (compatible; SHIB-Tracker/1.0)"
+        }
+        resp = requests.get(url, headers=headers, timeout=15)
+        html = resp.text
         
-        # 2. Burned tokens
-        burned = 0
-        for addr in BURN_ADDRESSES:
-            bal_url = f"{base_url}?chainid={CHAIN_ID}&module=account&action=tokenbalance&contractaddress={SHIB_CONTRACT}&address={addr}&tag=latest&apikey={ETHERSCAN_API_KEY}"
-            bal_resp = requests.get(bal_url, timeout=10).json()
-            burned += int(bal_resp.get('result', 0))
+        # Look for Total Burned percentage (e.g. "41.08%")
+        percent_match = re.search(r'(\d+\.\d+)%', html)
+        burned_match = re.search(r'Total Burned[^0-9]*([\d,]+)', html.replace(',', ''))
         
-        initial_supply = 1_000_000_000_000_000
-        burn_percentage = burned / 100 if initial_supply > 0 else 0
+        burn_percentage = float(percent_match.group(1)) if percent_match else None
+        burned_str = burned_match.group(1) if burned_match else None
+        burned = int(burned_str.replace(',', '')) * 10**12 if burned_str else None  # rough parse, adjust if needed
+        
+        if burn_percentage is None:
+            # Fallback: try Burnalytics asset page
+            url2 = f"https://www.burnalytics.com/asset/{SHIB_CONTRACT}"
+            resp2 = requests.get(url2, headers=headers, timeout=10)
+            html2 = resp2.text
+            percent_match2 = re.search(r'(\d+\.\d+)%', html2)
+            if percent_match2:
+                burn_percentage = float(percent_match2.group(1))
         
         return {
             "burn_percentage": burn_percentage,
             "burned": burned
         }
     except Exception as e:
-        st.error(f"Etherscan V2 error: {e}")
-        return None
+        st.error(f"Shibburn fetch error: {e}")
+        return {"burn_percentage": None, "burned": None}
 
-# Fetch data
-price = fetch_price_dexscreener()
-supply_data = fetch_supply_and_burn()
+# ================== MAIN DISPLAY ==================
+col1, col2 = st.columns(2)
 
-if price is not None and supply_data:
-    col1, col2, col3 = st.columns(3)
-    
-    with col1:
-        st.metric(
-            label="💰 Current SHIB Price (USD)",
-            value=f"${price:.8f}"
-        )
-    
-    with col2:
-        st.metric(
-            label="🔥 Total Burn Percentage",
-            value=f"{supply_data['burn_percentage']:.4f}%"
-        )
+with col1:
+    price = fetch_price_dexscreener()
+    if price:
+        st.metric("SHIB Price (USD)", f"${price:.10f}")
+    else:
+        st.metric("SHIB Price", "Loading...")
 
-    with col3:
-        st.metric(
-            label="🔥 Total Burned",
-            value=f"{supply_data['burned']:.0f}"
-        )
+with col2:
+    burn_data = fetch_burn_from_shibburn()
+    if burn_data["burn_percentage"] is not None:
+        st.metric("Burned %", f"{burn_data['burn_percentage']:.2f}%")
+        if burn_data["burned"]:
+            st.caption(f"Total Burned: {burn_data['burned']:,} SHIB")
+    else:
+        st.metric("Burned %", "Loading...")
 
-else:
-    st.error("Failed to fetch data. Make sure your Etherscan API key is correct.")
+st.divider()
 
-st.markdown("---")
+st.info("💡 Burn data is now sourced from Shibburn.com (the community standard tracker).")
