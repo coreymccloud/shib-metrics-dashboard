@@ -11,7 +11,7 @@ st.set_page_config(
     layout="wide"
 )
 
-# JavaScript Auto-refresh every 15 seconds
+# Auto-refresh every 15 seconds
 st.markdown("""
     <script>
         function autoRefresh() {
@@ -44,17 +44,15 @@ def fetch_price_dexscreener():
 def fetch_burn_from_shibburn():
     try:
         url = "https://www.shibburn.com/"
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; SHIB-Tracker/1.0)"}
-        resp = requests.get(url, headers=headers, timeout=15)
+        headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0 Safari/537.36"
+        }
+        resp = requests.get(url, headers=headers, timeout=20)
         html = resp.text
 
-        # Total Burned %
+        # Total Burned Percentage
         percent_match = re.search(r'Total Burned\s*(\d+\.\d+)%', html)
-        # Total Burned amount
-        burned_match = re.search(r'Total Burned\s*[\s\S]*?(\d{1,3}(?:,\d{3})*)', html)
-
         burn_percentage = float(percent_match.group(1)) if percent_match else None
-        burned = int(burned_match.group(1).replace(',', '')) if burned_match else None
 
         # 24h Burn
         burn_24h_match = re.search(r'Last 24 Hours\s*[\s\S]*?(\d{1,3}(?:,\d{3})*)', html)
@@ -66,13 +64,12 @@ def fetch_burn_from_shibburn():
 
         return {
             "burn_percentage": burn_percentage,
-            "burned": burned,
             "burn_24h": burn_24h,
             "burn_7d": burn_7d
         }
     except Exception as e:
-        st.error(f"Burn data fetch error: {e}")
-        return {"burn_percentage": None, "burned": None, "burn_24h": None, "burn_7d": None}
+        st.error(f"Burn data fetch error: {str(e)}")
+        return {"burn_percentage": None, "burn_24h": None, "burn_7d": None}
 
 
 @lru_cache(maxsize=5)
@@ -147,7 +144,6 @@ with col2:
     if burn_data["burn_percentage"] is not None:
         st.metric("Total Burned %", f"{burn_data['burn_percentage']:.2f}%")
         
-        # 24h and 7d Burn
         subcol1, subcol2 = st.columns(2)
         with subcol1:
             if burn_data["burn_24h"] is not None:
