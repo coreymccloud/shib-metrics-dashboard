@@ -24,7 +24,7 @@ st.caption("🔄 Auto-refreshes every 15s • DexScreener + Etherscan V2")
 
 # ================== ETHERSCAN API KEY ==================
 # Get free key here: https://etherscan.io/apidashboard
-ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "YourApiKeyToken")  # Replace with your key
+ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "S1JBXUTRAPY3WGTA5ZA4N7IRZEFVR25ZIC")  # Replace with your key
 
 # SHIB Contract on Ethereum (chainid=1)
 SHIB_CONTRACT = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"
