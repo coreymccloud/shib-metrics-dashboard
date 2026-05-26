@@ -155,12 +155,7 @@ with col2:
     burn_data = fetch_burn_from_etherscan()
     if burn_data["burn_percentage"] is not None:
         st.metric("Total Burned %", f"{burn_data['burn_percentage']:.2f}%")
-        
-        subcol1, subcol2 = st.columns(2)
-        with subcol1:
-            st.metric("24h Burn", "On-chain soon")
-        with subcol2:
-            st.metric("7d Burn", "On-chain soon")
+    
     else:
         st.metric("Total Burned %", "Loading...")
 
