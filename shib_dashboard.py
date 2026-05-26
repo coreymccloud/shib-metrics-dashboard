@@ -66,6 +66,7 @@ def fetch_supply_and_burn():
         
         return {
             "burn_percentage": burn_percentage
+            "burned": burned
         }
     except Exception as e:
         st.error(f"Etherscan V2 error: {e}")
@@ -88,6 +89,7 @@ if price is not None and supply_data:
         st.metric(
             label="🔥 Total Burn Percentage",
             value=f"{supply_data['burn_percentage']:.4f}%"
+            value=f"{supply_data['burned']:.0f}
         )
 
 else:
