@@ -1,18 +1,18 @@
 import streamlit as st
 import requests
-from datetime import datetime
 import re
 import pandas as pd
-import numpy as np
+from functools import lru_cache
+from datetime import datetime
 
 # ========================= CONFIG =========================
 st.set_page_config(
     page_title="SHIB Burn & Price Tracker",
     page_icon="🐕",
-    layout="centered"
+    layout="wide"
 )
 
-# JavaScript Auto-refresh every 15 seconds
+# Auto-refresh every 15 seconds
 st.markdown("""
     <script>
         function autoRefresh() {
@@ -23,96 +23,97 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🐕 Shiba Inu (SHIB) Burn & Price Tracker")
-st.caption("🔄 Auto-refreshes every 15s • DexScreener + Shibburn")
+st.caption("🔄 Auto-refreshes every 15s • DexScreener + Shibburn + CoinGecko + DefiLlama")
 
-# ================== ETHERSCAN API KEY (still needed for other features if you keep them) ==================
+# ================== API KEYS & CONSTANTS ==================
 ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "S1JBXUTRAPY3WGTA5ZA4N7IRZEFVR25ZIC")
-
-# SHIB Contract on Ethereum (chainid=1)
 SHIB_CONTRACT = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"
-CHAIN_ID = 1
 
+# ================== FETCH FUNCTIONS ==================
 def fetch_price_dexscreener():
     try:
         url = f"https://api.dexscreener.com/token-pairs/v1/ethereum/{SHIB_CONTRACT}"
         resp = requests.get(url, timeout=10)
         data = resp.json()
-        
         if data and isinstance(data, list) and len(data) > 0:
             best_pair = max(data, key=lambda x: x.get('liquidity', {}).get('usd', 0))
-            price = float(best_pair.get('priceUsd', 0))
-            return price if price > 0 else None
+            return float(best_pair.get('priceUsd', 0))
         return None
     except:
         return None
 
 def fetch_burn_from_shibburn():
-    """Fetch burn percentage and total burned from Shibburn (powered by Burnalytics)"""
     try:
-        # Shibburn.com displays the data directly
         url = "https://www.shibburn.com/"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (compatible; SHIB-Tracker/1.0)"
-        }
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; SHIB-Tracker/1.0)"}
         resp = requests.get(url, headers=headers, timeout=15)
         html = resp.text
         
-        # Look for Total Burned percentage (e.g. "41.08%")
         percent_match = re.search(r'(\d+\.\d+)%', html)
         burned_match = re.search(r'Total Burned[^0-9]*([\d,]+)', html.replace(',', ''))
         
         burn_percentage = float(percent_match.group(1)) if percent_match else None
-        burned_str = burned_match.group(1) if burned_match else None
-        burned = int(burned_str.replace(',', '')) * 10**12 if burned_str else None  # rough parse, adjust if needed
+        burned = int(burned_match.group(1).replace(',', '')) * 10**12 if burned_match else None
         
-        if burn_percentage is None:
-            # Fallback: try Burnalytics asset page
-            url2 = f"https://www.burnalytics.com/asset/{SHIB_CONTRACT}"
-            resp2 = requests.get(url2, headers=headers, timeout=10)
-            html2 = resp2.text
-            percent_match2 = re.search(r'(\d+\.\d+)%', html2)
-            if percent_match2:
-                burn_percentage = float(percent_match2.group(1))
-        
-        return {
-            "burn_percentage": burn_percentage,
-            "burned": burned
-        }
-    except Exception as e:
-        st.error(f"Shibburn fetch error: {e}")
+        return {"burn_percentage": burn_percentage, "burned": burned}
+    except:
         return {"burn_percentage": None, "burned": None}
 
-
+@lru_cache(maxsize=5)
 def fetch_historical_prices(days=365):
-    """Fetch historical daily prices from CoinGecko for MVRV Z-score approximation"""
     try:
         url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days={days}&interval=daily"
         resp = requests.get(url, timeout=15)
         data = resp.json()
-        prices = data.get('prices', [])
-        df = pd.DataFrame(prices, columns=['timestamp', 'price'])
-        df['date'] = pd.to_datetime(df['timestamp'], unit='ms').dt.date
-        df = df.drop_duplicates(subset='date').set_index('date')
-        return df['price']
+        
+        prices = pd.DataFrame(data.get('prices', []), columns=['timestamp', 'price'])
+        market_caps = pd.DataFrame(data.get('market_caps', []), columns=['timestamp', 'market_cap'])
+        
+        prices['date'] = pd.to_datetime(prices['timestamp'], unit='ms').dt.date
+        market_caps['date'] = pd.to_datetime(market_caps['timestamp'], unit='ms').dt.date
+        
+        df = prices.merge(market_caps, on='date').drop_duplicates(subset='date').set_index('date')
+        return df[['price', 'market_cap']]
     except:
-        return pd.Series()
-
+        return pd.DataFrame()
 
 def calculate_mvrv_z_score(prices: pd.Series, period: int):
-    """Approximate MVRV Z-Score using price data over rolling periods"""
-    if len(prices) < period:
+    if len(prices) < max(period * 2, 30):
         return None
     mean = prices.rolling(window=period).mean().iloc[-1]
     std = prices.rolling(window=period).std().iloc[-1]
-    current_price = prices.iloc[-1]
-    if std == 0:
+    current = prices.iloc[-1]
+    if std == 0 or pd.isna(std):
         return 0.0
-    z_score = (current_price - mean) / std
+    z_score = (current - mean) / std
     return round(z_score, 2)
 
+@lru_cache(maxsize=10)
+def fetch_coingecko_data():
+    try:
+        url = "https://api.coingecko.com/api/v3/coins/shiba-inu"
+        data = requests.get(url, timeout=10).json()
+        return {
+            "market_cap": data['market_data']['market_cap']['usd'],
+            "volume_24h": data['market_data']['total_volume']['usd'],
+            "price_change_24h": data['market_data']['price_change_percentage_24h']
+        }
+    except:
+        return None
+
+def fetch_shibarium_tvl():
+    try:
+        resp = requests.get("https://api.llama.fi/chains", timeout=10)
+        data = resp.json()
+        for chain in data:
+            if chain.get('name', '').lower() == 'shibarium':
+                return chain.get('tvl', 0), chain.get('change_24h', 0)
+        return None, None
+    except:
+        return None, None
 
 # ================== MAIN DISPLAY ==================
-col1, col2 = st.columns(2)
+col1, col2, col3 = st.columns(3)
 
 with col1:
     price = fetch_price_dexscreener()
@@ -124,32 +125,66 @@ with col1:
 with col2:
     burn_data = fetch_burn_from_shibburn()
     if burn_data["burn_percentage"] is not None:
-        st.metric("Burned %", f"{burn_data['burn_percentage']:.2f}%")
+        st.metric("Total Burned %", f"{burn_data['burn_percentage']:.2f}%")
     else:
-        st.metric("Burned %", "Loading...")
+        st.metric("Total Burned %", "Loading...")
+
+with col3:
+    cg = fetch_coingecko_data()
+    if cg:
+        st.metric("24h Volume", f"${cg['volume_24h']:,.0f}", 
+                 f"{cg['price_change_24h']:.1f}%")
+    else:
+        st.metric("24h Volume", "Loading...")
 
 # ================== MVRV Z-SCORE SECTION ==================
 st.subheader("📊 MVRV Z-Score (Price-Based Approximation)")
-st.caption("Calculated using rolling mean & std dev of historical prices (CoinGecko)")
+st.caption("True on-chain Realized Cap for ERC-20s like SHIB is not freely available. This uses rolling price statistics.")
 
-prices_365 = fetch_historical_prices(days=365)  # Fetch enough history
+df_hist = fetch_historical_prices(days=365)
 
-if not prices_365.empty:
+if not df_hist.empty:
+    current_mcap = df_hist['market_cap'].iloc[-1]
+    st.metric("Current Market Cap", f"${current_mcap:,.0f}")
+    
     periods = [3, 7, 30, 90, 180]
-    z_scores = {}
-    
-    for p in periods:
-        z = calculate_mvrv_z_score(prices_365, p)
-        z_scores[p] = z
-    
-    # Display in columns
     cols = st.columns(len(periods))
+    
     for idx, p in enumerate(periods):
-        z = z_scores[p]
-        if z is not None:
-            delta = "Overvalued" if z > 2 else "Undervalued" if z < -2 else "Neutral"
-            cols[idx].metric(f"{p}d MVRV Z", f"{z}", delta=delta)
-        else:
-            cols[idx].metric(f"{p}d MVRV Z", "N/A")
+        z = calculate_mvrv_z_score(df_hist['price'], p)
+        with cols[idx]:
+            if z is not None:
+                if z > 2.0:
+                    delta = "Overvalued"
+                    color = "inverse"
+                elif z < -1.5:
+                    delta = "Undervalued"
+                    color = "normal"
+                else:
+                    delta = "Neutral"
+                    color = "normal"
+                st.metric(f"{p}d Z-Score", f"{z:.2f}", delta=delta, delta_color=color)
+            else:
+                st.metric(f"{p}d Z-Score", "N/A")
 else:
-    st.warning("Could not fetch historical price data for MVRV Z-score calculation.")
+    st.warning("Could not load historical data for MVRV calculation.")
+
+# ================== ECOSYSTEM METRICS ==================
+st.subheader("🌐 Ecosystem & Activity Metrics")
+
+tvl, tvl_24h = fetch_shibarium_tvl()
+col_a, col_b, col_c = st.columns(3)
+
+with col_a:
+    if tvl is not None:
+        st.metric("Shibarium TVL", f"${tvl:,.0f}", f"{tvl_24h:.1f}% 24h")
+    else:
+        st.metric("Shibarium TVL", "N/A")
+
+with col_b:
+    st.info("**Burn Rate Trend**\nTrack daily/weekly burn changes on Shibburn.com")
+
+with col_c:
+    st.info("**Decision Signals**\n• Low Z-Score + Rising TVL/Burn = **Buy**\n• High Z-Score + Declining Activity = **Sell**")
+
+st.caption("**Disclaimer**: SHIB is a high-risk meme coin. These metrics are for informational purposes only. Always DYOR and manage risk.")
