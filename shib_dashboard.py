@@ -3,6 +3,7 @@ import requests
 import re
 import pandas as pd
 from functools import lru_cache
+from datetime import datetime
 
 # ========================= CONFIG =========================
 st.set_page_config(
@@ -24,7 +25,8 @@ st.markdown("""
 st.title("🐕 Shiba Inu (SHIB) Burn & Price Tracker")
 st.caption("🔄 Auto-refreshes every 15s • DexScreener + Shibburn + CoinGecko + DefiLlama")
 
-# ================== CONSTANTS ==================
+# ================== API KEYS & CONSTANTS ==================
+ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "S1JBXUTRAPY3WGTA5ZA4N7IRZEFVR25ZIC")
 SHIB_CONTRACT = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"
 
 # ================== FETCH FUNCTIONS ==================
@@ -40,37 +42,22 @@ def fetch_price_dexscreener():
     except:
         return None
 
-
 def fetch_burn_from_shibburn():
     try:
         url = "https://www.shibburn.com/"
-        headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/135.0 Safari/537.36"
-        }
-        resp = requests.get(url, headers=headers, timeout=20)
+        headers = {"User-Agent": "Mozilla/5.0 (compatible; SHIB-Tracker/1.0)"}
+        resp = requests.get(url, headers=headers, timeout=15)
         html = resp.text
-
-        # Total Burned %
-        percent_match = re.search(r'Total Burned\s*(\d+\.\d+)%', html)
+        
+        percent_match = re.search(r'(\d+\.\d+)%', html)
+        burned_match = re.search(r'Total Burned[^0-9]*([\d,]+)', html.replace(',', ''))
+        
         burn_percentage = float(percent_match.group(1)) if percent_match else None
-
-        # 24h Burn
-        burn_24h_match = re.search(r'Last 24 Hours[\s\S]*?(\d{1,3}(?:,\d{3})*)', html)
-        burn_24h = int(burn_24h_match.group(1).replace(',', '')) if burn_24h_match else None
-
-        # 7d Burn
-        burn_7d_match = re.search(r'Last 7 Days[\s\S]*?(\d{1,3}(?:,\d{3})*)', html)
-        burn_7d = int(burn_7d_match.group(1).replace(',', '')) if burn_7d_match else None
-
-        return {
-            "burn_percentage": burn_percentage,
-            "burn_24h": burn_24h,
-            "burn_7d": burn_7d
-        }
-    except Exception as e:
-        st.error(f"🔴 Shibburn fetch failed: {str(e)[:100]}")
-        return {"burn_percentage": None, "burn_24h": None, "burn_7d": None}
-
+        burned = int(burned_match.group(1).replace(',', '')) * 10**12 if burned_match else None
+        
+        return {"burn_percentage": burn_percentage, "burned": burned}
+    except:
+        return {"burn_percentage": None, "burned": None}
 
 @lru_cache(maxsize=5)
 def fetch_historical_prices(days=365):
@@ -90,7 +77,6 @@ def fetch_historical_prices(days=365):
     except:
         return pd.DataFrame()
 
-
 def calculate_mvrv_z_score(prices: pd.Series, period: int):
     if len(prices) < max(period * 2, 30):
         return None
@@ -101,7 +87,6 @@ def calculate_mvrv_z_score(prices: pd.Series, period: int):
         return 0.0
     z_score = (current - mean) / std
     return round(z_score, 2)
-
 
 @lru_cache(maxsize=10)
 def fetch_coingecko_data():
@@ -116,7 +101,6 @@ def fetch_coingecko_data():
     except:
         return None
 
-
 def fetch_shibarium_tvl():
     try:
         resp = requests.get("https://api.llama.fi/chains", timeout=10)
@@ -127,7 +111,6 @@ def fetch_shibarium_tvl():
         return None, None
     except:
         return None, None
-
 
 # ================== MAIN DISPLAY ==================
 col1, col2, col3 = st.columns(3)
@@ -143,18 +126,6 @@ with col2:
     burn_data = fetch_burn_from_shibburn()
     if burn_data["burn_percentage"] is not None:
         st.metric("Total Burned %", f"{burn_data['burn_percentage']:.2f}%")
-        
-        subcol1, subcol2 = st.columns(2)
-        with subcol1:
-            if burn_data["burn_24h"] is not None:
-                st.metric("24h Burn", f"{burn_data['burn_24h']:,} SHIB")
-            else:
-                st.metric("24h Burn", "N/A")
-        with subcol2:
-            if burn_data["burn_7d"] is not None:
-                st.metric("7d Burn", f"{burn_data['burn_7d']:,} SHIB")
-            else:
-                st.metric("7d Burn", "N/A")
     else:
         st.metric("Total Burned %", "Loading...")
 
@@ -168,7 +139,7 @@ with col3:
 
 # ================== MVRV Z-SCORE SECTION ==================
 st.subheader("📊 MVRV Z-Score (Price-Based Approximation)")
-st.caption("True on-chain Realized Cap for ERC-20s like SHIB is not freely available.")
+st.caption("True on-chain Realized Cap for ERC-20s like SHIB is not freely available. This uses rolling price statistics.")
 
 df_hist = fetch_historical_prices(days=365)
 
@@ -178,16 +149,25 @@ if not df_hist.empty:
     
     periods = [3, 7, 30, 90, 180]
     cols = st.columns(len(periods))
+    
     for idx, p in enumerate(periods):
         z = calculate_mvrv_z_score(df_hist['price'], p)
         with cols[idx]:
             if z is not None:
-                delta = "Overvalued" if z > 2 else "Undervalued" if z < -1.5 else "Neutral"
-                st.metric(f"{p}d Z-Score", f"{z:.2f}", delta=delta)
+                if z > 2.0:
+                    delta = "Overvalued"
+                    color = "inverse"
+                elif z < -1.5:
+                    delta = "Undervalued"
+                    color = "normal"
+                else:
+                    delta = "Neutral"
+                    color = "normal"
+                st.metric(f"{p}d Z-Score", f"{z:.2f}", delta=delta, delta_color=color)
             else:
                 st.metric(f"{p}d Z-Score", "N/A")
 else:
-    st.warning("Could not load historical data for MVRV.")
+    st.warning("Could not load historical data for MVRV calculation.")
 
 # ================== ECOSYSTEM METRICS ==================
 st.subheader("🌐 Ecosystem & Activity Metrics")
@@ -202,9 +182,9 @@ with col_a:
         st.metric("Shibarium TVL", "N/A")
 
 with col_b:
-    st.info("**Burn Data**: Live from Shibburn.com")
+    st.info("**Burn Rate Trend**\nTrack daily/weekly burn changes on Shibburn.com")
 
 with col_c:
-    st.info("**Decision Signals**\n• Low Z-Score + Rising Burns/TVL = **Buy**\n• High Z-Score = **Sell**")
+    st.info("**Decision Signals**\n• Low Z-Score + Rising TVL/Burn = **Buy**\n• High Z-Score + Declining Activity = **Sell**")
 
-st.caption("**Disclaimer**: SHIB is high-risk. These are informational metrics only.")
+st.caption("**Disclaimer**: SHIB is a high-risk meme coin. These metrics are for informational purposes only. Always DYOR and manage risk.")
