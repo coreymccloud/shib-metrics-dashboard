@@ -89,7 +89,7 @@ if price is not None and supply_data:
         st.metric(
             label="🔥 Total Burn Percentage",
             value=f"{supply_data['burn_percentage']:.4f}%"
-            value=f"{supply_data['burned']:.0f}
+            value=f"{supply_data['burned']:.0f}"
         )
 
 else:
