@@ -65,7 +65,7 @@ def fetch_supply_and_burn():
         burn_percentage = (burned / initial_supply) * 100 if initial_supply > 0 else 0
         
         return {
-            "burn_percentage": burn_percentage
+            "burn_percentage": burn_percentage,
             "burned": burned
         }
     except Exception as e:
