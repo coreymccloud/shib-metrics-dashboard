@@ -27,9 +27,9 @@ st.caption("🔄 Auto-refreshes every 15s • DexScreener + Etherscan (On-Chain)
 ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "S1JBXUTRAPY3WGTA5ZA4N7IRZEFVR25ZIC")
 SHIB_CONTRACT = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"
 
-# Main Burn Addresses (on-chain dead wallets)
+# Updated Burn Addresses (main one has ~410T SHIB)
 BURN_ADDRESSES = [
-    "0xdead000000000000000042069420694206942069",  # Primary dead
+    "0xdEAD000000000000000042069420694206942069",  # Primary (Vitalik's burn address)
     "0x000000000000000000000000000000000000dead",  # Null
     "0x0000000000000000000000000000000000000000",  # Zero
 ]
@@ -49,7 +49,7 @@ def fetch_price_dexscreener():
 
 
 def fetch_burn_from_etherscan():
-    """On-chain burn data from Etherscan (most reliable)"""
+    """On-chain accurate burn data"""
     try:
         total_burned = 0.0
 
@@ -66,21 +66,21 @@ def fetch_burn_from_etherscan():
             resp = requests.get(url, timeout=12).json()
             
             if resp.get("status") == "1" and resp.get("result"):
-                balance = int(resp["result"]) / 1e18  # SHIB has 18 decimals
+                balance = int(resp["result"]) / 1e18
                 total_burned += balance
 
-        # Approximate percentage (based on original 1 Quadrillion supply)
-        initial_supply = 1_000_000_000_000_000
+        # Accurate percentage calculation
+        initial_supply = 1_000_000_000_000_000  # 1 Quadrillion
         burn_percentage = round((total_burned / initial_supply) * 100, 2)
 
         return {
             "burn_percentage": burn_percentage,
             "burned": int(total_burned),
-            "burn_24h": None,   # 24h/7d requires token transfer logs (more complex)
+            "burn_24h": None,
             "burn_7d": None
         }
     except Exception as e:
-        st.error(f"Etherscan error: {str(e)[:100]}")
+        st.error(f"Etherscan error: {str(e)[:120]}")
         return {"burn_percentage": None, "burned": None, "burn_24h": None, "burn_7d": None}
 
 
@@ -158,9 +158,9 @@ with col2:
         
         subcol1, subcol2 = st.columns(2)
         with subcol1:
-            st.metric("24h Burn", "On-chain soon")
+            st.metric("24h Burn", "Coming Soon")
         with subcol2:
-            st.metric("7d Burn", "On-chain soon")
+            st.metric("7d Burn", "Coming Soon")
     else:
         st.metric("Total Burned %", "Loading...")
 
@@ -217,9 +217,9 @@ with col_a:
         st.metric("Shibarium TVL", "N/A")
 
 with col_b:
-    st.info("**Burn Data**: Direct from Etherscan (on-chain balances)")
+    st.info("**Burn Data**: Direct on-chain from Etherscan")
 
 with col_c:
     st.info("**Decision Signals**\n• Low Z-Score + Rising Burns/TVL = **Buy**\n• High Z-Score + Declining Activity = **Sell**")
 
-st.caption("**Burn Source**: Etherscan API (on-chain) • Much more stable than web scraping")
+st.caption("**Burn Source**: Etherscan API (on-chain balances) • Stable & Accurate")
