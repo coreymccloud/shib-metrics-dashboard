@@ -1,9 +1,7 @@
 import streamlit as st
 import requests
-import re
 import pandas as pd
 from functools import lru_cache
-from datetime import datetime
 
 # ========================= CONFIG =========================
 st.set_page_config(
@@ -23,11 +21,18 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🐕 Shiba Inu (SHIB) Burn & Price Tracker")
-st.caption("🔄 Auto-refreshes every 15s • DexScreener + Shibburn + CoinGecko + DefiLlama")
+st.caption("🔄 Auto-refreshes every 15s • DexScreener + Etherscan (On-Chain) + CoinGecko + DefiLlama")
 
 # ================== API KEYS & CONSTANTS ==================
 ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "S1JBXUTRAPY3WGTA5ZA4N7IRZEFVR25ZIC")
 SHIB_CONTRACT = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"
+
+# Main Burn Addresses (on-chain dead wallets)
+BURN_ADDRESSES = [
+    "0xdead000000000000000042069420694206942069",  # Primary dead
+    "0x000000000000000000000000000000000000dead",  # Null
+    "0x0000000000000000000000000000000000000000",  # Zero
+]
 
 # ================== FETCH FUNCTIONS ==================
 def fetch_price_dexscreener():
@@ -42,22 +47,42 @@ def fetch_price_dexscreener():
     except:
         return None
 
-def fetch_burn_from_shibburn():
+
+def fetch_burn_from_etherscan():
+    """On-chain burn data from Etherscan (most reliable)"""
     try:
-        url = "https://www.shibburn.com/"
-        headers = {"User-Agent": "Mozilla/5.0 (compatible; SHIB-Tracker/1.0)"}
-        resp = requests.get(url, headers=headers, timeout=15)
-        html = resp.text
-        
-        percent_match = re.search(r'(\d+\.\d+)%', html)
-        burned_match = re.search(r'Total Burned[^0-9]*([\d,]+)', html.replace(',', ''))
-        
-        burn_percentage = float(percent_match.group(1)) if percent_match else None
-        burned = int(burned_match.group(1).replace(',', '')) * 10**12 if burned_match else None
-        
-        return {"burn_percentage": burn_percentage, "burned": burned}
-    except:
-        return {"burn_percentage": None, "burned": None}
+        total_burned = 0.0
+
+        for addr in BURN_ADDRESSES:
+            url = (
+                f"https://api.etherscan.io/api"
+                f"?module=account"
+                f"&action=tokenbalance"
+                f"&contractaddress={SHIB_CONTRACT}"
+                f"&address={addr}"
+                f"&tag=latest"
+                f"&apikey={ETHERSCAN_API_KEY}"
+            )
+            resp = requests.get(url, timeout=12).json()
+            
+            if resp.get("status") == "1" and resp.get("result"):
+                balance = int(resp["result"]) / 1e18  # SHIB has 18 decimals
+                total_burned += balance
+
+        # Approximate percentage (based on original 1 Quadrillion supply)
+        initial_supply = 1_000_000_000_000_000
+        burn_percentage = round((total_burned / initial_supply) * 100, 2)
+
+        return {
+            "burn_percentage": burn_percentage,
+            "burned": int(total_burned),
+            "burn_24h": None,   # 24h/7d requires token transfer logs (more complex)
+            "burn_7d": None
+        }
+    except Exception as e:
+        st.error(f"Etherscan error: {str(e)[:100]}")
+        return {"burn_percentage": None, "burned": None, "burn_24h": None, "burn_7d": None}
+
 
 @lru_cache(maxsize=5)
 def fetch_historical_prices(days=365):
@@ -77,6 +102,7 @@ def fetch_historical_prices(days=365):
     except:
         return pd.DataFrame()
 
+
 def calculate_mvrv_z_score(prices: pd.Series, period: int):
     if len(prices) < max(period * 2, 30):
         return None
@@ -87,6 +113,7 @@ def calculate_mvrv_z_score(prices: pd.Series, period: int):
         return 0.0
     z_score = (current - mean) / std
     return round(z_score, 2)
+
 
 @lru_cache(maxsize=10)
 def fetch_coingecko_data():
@@ -101,6 +128,7 @@ def fetch_coingecko_data():
     except:
         return None
 
+
 def fetch_shibarium_tvl():
     try:
         resp = requests.get("https://api.llama.fi/chains", timeout=10)
@@ -111,6 +139,7 @@ def fetch_shibarium_tvl():
         return None, None
     except:
         return None, None
+
 
 # ================== MAIN DISPLAY ==================
 col1, col2, col3 = st.columns(3)
@@ -123,9 +152,15 @@ with col1:
         st.metric("SHIB Price", "Loading...")
 
 with col2:
-    burn_data = fetch_burn_from_shibburn()
+    burn_data = fetch_burn_from_etherscan()
     if burn_data["burn_percentage"] is not None:
         st.metric("Total Burned %", f"{burn_data['burn_percentage']:.2f}%")
+        
+        subcol1, subcol2 = st.columns(2)
+        with subcol1:
+            st.metric("24h Burn", "On-chain soon")
+        with subcol2:
+            st.metric("7d Burn", "On-chain soon")
     else:
         st.metric("Total Burned %", "Loading...")
 
@@ -182,9 +217,9 @@ with col_a:
         st.metric("Shibarium TVL", "N/A")
 
 with col_b:
-    st.info("**Burn Rate Trend**\nTrack daily/weekly burn changes on Shibburn.com")
+    st.info("**Burn Data**: Direct from Etherscan (on-chain balances)")
 
 with col_c:
-    st.info("**Decision Signals**\n• Low Z-Score + Rising TVL/Burn = **Buy**\n• High Z-Score + Declining Activity = **Sell**")
+    st.info("**Decision Signals**\n• Low Z-Score + Rising Burns/TVL = **Buy**\n• High Z-Score + Declining Activity = **Sell**")
 
-st.caption("**Disclaimer**: SHIB is a high-risk meme coin. These metrics are for informational purposes only. Always DYOR and manage risk.")
+st.caption("**Burn Source**: Etherscan API (on-chain) • Much more stable than web scraping")
