@@ -1,16 +1,15 @@
 import streamlit as st
 import requests
-import pandas as pd
-from functools import lru_cache
+from datetime import datetime
 
 # ========================= CONFIG =========================
 st.set_page_config(
     page_title="SHIB Burn & Price Tracker",
     page_icon="🐕",
-    layout="wide"
+    layout="centered"
 )
 
-# Auto-refresh every 15 seconds
+# JavaScript Auto-refresh every 15 seconds
 st.markdown("""
     <script>
         function autoRefresh() {
@@ -21,200 +20,99 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 st.title("🐕 Shiba Inu (SHIB) Burn & Price Tracker")
-st.caption("🔄 Auto-refreshes every 15s • DexScreener + Etherscan (On-Chain) + CoinGecko + DefiLlama")
+st.caption("🔄 Auto-refreshes every 15s • DexScreener + Etherscan V2")
 
-# ================== API KEYS & CONSTANTS ==================
-ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "S1JBXUTRAPY3WGTA5ZA4N7IRZEFVR25ZIC")
+# ================== ETHERSCAN API KEY ==================
+# Get free key here: https://etherscan.io/apidashboard
+ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "YourApiKeyToken")  # Replace with your key
+
+# SHIB Contract on Ethereum (chainid=1)
 SHIB_CONTRACT = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"
+CHAIN_ID = 1
 
-# Main Burn Addresses (on-chain dead wallets)
+# Main burn addresses
 BURN_ADDRESSES = [
-    "0xdead000000000000000042069420694206942069",  # Primary dead
-    "0x000000000000000000000000000000000000dead",  # Null
-    "0x0000000000000000000000000000000000000000",  # Zero
+    "0x000000000000000000000000000000000000dead",
+    "0xdead000000000000000042069420694206942069"
 ]
 
-# ================== FETCH FUNCTIONS ==================
 def fetch_price_dexscreener():
     try:
         url = f"https://api.dexscreener.com/token-pairs/v1/ethereum/{SHIB_CONTRACT}"
         resp = requests.get(url, timeout=10)
         data = resp.json()
+        
         if data and isinstance(data, list) and len(data) > 0:
             best_pair = max(data, key=lambda x: x.get('liquidity', {}).get('usd', 0))
-            return float(best_pair.get('priceUsd', 0))
+            price = float(best_pair.get('priceUsd', 0))
+            return price if price > 0 else None
         return None
     except:
         return None
 
-
-def fetch_burn_from_etherscan():
-    """On-chain burn data from Etherscan (most reliable)"""
+def fetch_supply_and_burn():
     try:
-        total_burned = 0.0
-
+        base_url = "https://api.etherscan.io/v2/api"
+        
+        # 1. Total Supply (V2)
+        supply_url = f"{base_url}?chainid={CHAIN_ID}&module=stats&action=tokensupply&contractaddress={SHIB_CONTRACT}&apikey={ETHERSCAN_API_KEY}"
+        supply_resp = requests.get(supply_url, timeout=10).json()
+        total_supply = int(supply_resp.get('result', 0))
+        
+        # 2. Burned tokens
+        burned = 0
         for addr in BURN_ADDRESSES:
-            url = (
-                f"https://api.etherscan.io/api"
-                f"?module=account"
-                f"&action=tokenbalance"
-                f"&contractaddress={SHIB_CONTRACT}"
-                f"&address={addr}"
-                f"&tag=latest"
-                f"&apikey={ETHERSCAN_API_KEY}"
-            )
-            resp = requests.get(url, timeout=12).json()
-            
-            if resp.get("status") == "1" and resp.get("result"):
-                balance = int(resp["result"]) / 1e18  # SHIB has 18 decimals
-                total_burned += balance
-
-        # Approximate percentage (based on original 1 Quadrillion supply)
+            bal_url = f"{base_url}?chainid={CHAIN_ID}&module=account&action=tokenbalance&contractaddress={SHIB_CONTRACT}&address={addr}&tag=latest&apikey={ETHERSCAN_API_KEY}"
+            bal_resp = requests.get(bal_url, timeout=10).json()
+            burned += int(bal_resp.get('result', 0))
+        
         initial_supply = 1_000_000_000_000_000
-        burn_percentage = round((total_burned / initial_supply) * 100, 2)
-
+        burn_percentage = (burned / initial_supply) * 100 if initial_supply > 0 else 0
+        
         return {
-            "burn_percentage": burn_percentage,
-            "burned": int(total_burned),
-            "burn_24h": None,   # 24h/7d requires token transfer logs (more complex)
-            "burn_7d": None
+            "total_supply": total_supply,
+            "burned": burned,
+            "burn_percentage": burn_percentage
         }
     except Exception as e:
-        st.error(f"Etherscan error: {str(e)[:100]}")
-        return {"burn_percentage": None, "burned": None, "burn_24h": None, "burn_7d": None}
-
-
-@lru_cache(maxsize=5)
-def fetch_historical_prices(days=365):
-    try:
-        url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days={days}&interval=daily"
-        resp = requests.get(url, timeout=15)
-        data = resp.json()
-        
-        prices = pd.DataFrame(data.get('prices', []), columns=['timestamp', 'price'])
-        market_caps = pd.DataFrame(data.get('market_caps', []), columns=['timestamp', 'market_cap'])
-        
-        prices['date'] = pd.to_datetime(prices['timestamp'], unit='ms').dt.date
-        market_caps['date'] = pd.to_datetime(market_caps['timestamp'], unit='ms').dt.date
-        
-        df = prices.merge(market_caps, on='date').drop_duplicates(subset='date').set_index('date')
-        return df[['price', 'market_cap']]
-    except:
-        return pd.DataFrame()
-
-
-def calculate_mvrv_z_score(prices: pd.Series, period: int):
-    if len(prices) < max(period * 2, 30):
-        return None
-    mean = prices.rolling(window=period).mean().iloc[-1]
-    std = prices.rolling(window=period).std().iloc[-1]
-    current = prices.iloc[-1]
-    if std == 0 or pd.isna(std):
-        return 0.0
-    z_score = (current - mean) / std
-    return round(z_score, 2)
-
-
-@lru_cache(maxsize=10)
-def fetch_coingecko_data():
-    try:
-        url = "https://api.coingecko.com/api/v3/coins/shiba-inu"
-        data = requests.get(url, timeout=10).json()
-        return {
-            "market_cap": data['market_data']['market_cap']['usd'],
-            "volume_24h": data['market_data']['total_volume']['usd'],
-            "price_change_24h": data['market_data']['price_change_percentage_24h']
-        }
-    except:
+        st.error(f"Etherscan V2 error: {e}")
         return None
 
+# Fetch data
+price = fetch_price_dexscreener()
+supply_data = fetch_supply_and_burn()
 
-def fetch_shibarium_tvl():
-    try:
-        resp = requests.get("https://api.llama.fi/chains", timeout=10)
-        data = resp.json()
-        for chain in data:
-            if chain.get('name', '').lower() == 'shibarium':
-                return chain.get('tvl', 0), chain.get('change_24h', 0)
-        return None, None
-    except:
-        return None, None
-
-
-# ================== MAIN DISPLAY ==================
-col1, col2, col3 = st.columns(3)
-
-with col1:
-    price = fetch_price_dexscreener()
-    if price:
-        st.metric("SHIB Price (USD)", f"${price:.8f}")
-    else:
-        st.metric("SHIB Price", "Loading...")
-
-with col2:
-    burn_data = fetch_burn_from_etherscan()
-    if burn_data["burn_percentage"] is not None:
-        st.metric("Total Burned %", f"{burn_data['burn_percentage']:.2f}%")
+if price is not None and supply_data:
+    col1, col2 = st.columns(2)
     
-    else:
-        st.metric("Total Burned %", "Loading...")
-
-with col3:
-    cg = fetch_coingecko_data()
-    if cg:
-        st.metric("24h Volume", f"${cg['volume_24h']:,.0f}", 
-                 f"{cg['price_change_24h']:.1f}%")
-    else:
-        st.metric("24h Volume", "Loading...")
-
-# ================== MVRV Z-SCORE SECTION ==================
-st.subheader("📊 MVRV Z-Score (Price-Based Approximation)")
-st.caption("True on-chain Realized Cap for ERC-20s like SHIB is not freely available. This uses rolling price statistics.")
-
-df_hist = fetch_historical_prices(days=365)
-
-if not df_hist.empty:
-    current_mcap = df_hist['market_cap'].iloc[-1]
-    st.metric("Current Market Cap", f"${current_mcap:,.0f}")
+    with col1:
+        st.metric(
+            label="💰 Current SHIB Price (USD)",
+            value=f"${price:.8f}"
+        )
     
-    periods = [3, 7, 30, 90, 180]
-    cols = st.columns(len(periods))
-    
-    for idx, p in enumerate(periods):
-        z = calculate_mvrv_z_score(df_hist['price'], p)
-        with cols[idx]:
-            if z is not None:
-                if z > 2.0:
-                    delta = "Overvalued"
-                    color = "inverse"
-                elif z < -1.5:
-                    delta = "Undervalued"
-                    color = "normal"
-                else:
-                    delta = "Neutral"
-                    color = "normal"
-                st.metric(f"{p}d Z-Score", f"{z:.2f}", delta=delta, delta_color=color)
-            else:
-                st.metric(f"{p}d Z-Score", "N/A")
+    with col2:
+        st.metric(
+            label="🔥 Total Burn Percentage",
+            value=f"{supply_data['burn_percentage']:.4f}%"
+        )
+
+    st.divider()
+
+    st.subheader("Supply & Burn Details")
+    col_a, col_b, col_c = st.columns(3)
+    with col_a:
+        st.metric("Total Supply", f"{supply_data['total_supply']:,.0f}")
+    with col_b:
+        st.metric("Tokens Burned", f"{supply_data['burned']:,.0f}")
+    with col_c:
+        st.metric("Remaining Supply", f"{supply_data['total_supply'] - supply_data['burned']:,.0f}")
+
+    st.success(f"✅ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}")
+    st.caption("Price: DexScreener • Supply & Burn: Etherscan API V2 (on-chain)")
+
 else:
-    st.warning("Could not load historical data for MVRV calculation.")
+    st.error("Failed to fetch data. Make sure your Etherscan API key is correct.")
 
-# ================== ECOSYSTEM METRICS ==================
-st.subheader("🌐 Ecosystem & Activity Metrics")
-
-tvl, tvl_24h = fetch_shibarium_tvl()
-col_a, col_b, col_c = st.columns(3)
-
-with col_a:
-    if tvl is not None:
-        st.metric("Shibarium TVL", f"${tvl:,.0f}", f"{tvl_24h:.1f}% 24h")
-    else:
-        st.metric("Shibarium TVL", "N/A")
-
-with col_b:
-    st.info("**Burn Data**: Direct from Etherscan (on-chain balances)")
-
-with col_c:
-    st.info("**Decision Signals**\n• Low Z-Score + Rising Burns/TVL = **Buy**\n• High Z-Score + Declining Activity = **Sell**")
-
-st.caption("**Burn Source**: Etherscan API (on-chain) • Much more stable than web scraping")
+st.markdown("---")
+st.caption("Initial Supply: 1,000,000,000,000,000 SHIB")
