@@ -69,4 +69,157 @@ def fetch_burn_from_etherscan():
                 balance = int(resp["result"]) / 1e18  # SHIB has 18 decimals
                 total_burned += balance
 
-        # Approximate percentage
+        # Approximate percentage (based on original 1 Quadrillion supply)
+        initial_supply = 1_000_000_000_000_000
+        burn_percentage = round((total_burned / initial_supply) * 100, 2)
+
+        return {
+            "burn_percentage": burn_percentage,
+            "burned": int(total_burned),
+            "burn_24h": None,   # 24h/7d requires token transfer logs (more complex)
+            "burn_7d": None
+        }
+    except Exception as e:
+        st.error(f"Etherscan error: {str(e)[:100]}")
+        return {"burn_percentage": None, "burned": None, "burn_24h": None, "burn_7d": None}
+
+
+@lru_cache(maxsize=5)
+def fetch_historical_prices(days=365):
+    try:
+        url = f"https://api.coingecko.com/api/v3/coins/shiba-inu/market_chart?vs_currency=usd&days={days}&interval=daily"
+        resp = requests.get(url, timeout=15)
+        data = resp.json()
+        
+        prices = pd.DataFrame(data.get('prices', []), columns=['timestamp', 'price'])
+        market_caps = pd.DataFrame(data.get('market_caps', []), columns=['timestamp', 'market_cap'])
+        
+        prices['date'] = pd.to_datetime(prices['timestamp'], unit='ms').dt.date
+        market_caps['date'] = pd.to_datetime(market_caps['timestamp'], unit='ms').dt.date
+        
+        df = prices.merge(market_caps, on='date').drop_duplicates(subset='date').set_index('date')
+        return df[['price', 'market_cap']]
+    except:
+        return pd.DataFrame()
+
+
+def calculate_mvrv_z_score(prices: pd.Series, period: int):
+    if len(prices) < max(period * 2, 30):
+        return None
+    mean = prices.rolling(window=period).mean().iloc[-1]
+    std = prices.rolling(window=period).std().iloc[-1]
+    current = prices.iloc[-1]
+    if std == 0 or pd.isna(std):
+        return 0.0
+    z_score = (current - mean) / std
+    return round(z_score, 2)
+
+
+@lru_cache(maxsize=10)
+def fetch_coingecko_data():
+    try:
+        url = "https://api.coingecko.com/api/v3/coins/shiba-inu"
+        data = requests.get(url, timeout=10).json()
+        return {
+            "market_cap": data['market_data']['market_cap']['usd'],
+            "volume_24h": data['market_data']['total_volume']['usd'],
+            "price_change_24h": data['market_data']['price_change_percentage_24h']
+        }
+    except:
+        return None
+
+
+def fetch_shibarium_tvl():
+    try:
+        resp = requests.get("https://api.llama.fi/chains", timeout=10)
+        data = resp.json()
+        for chain in data:
+            if chain.get('name', '').lower() == 'shibarium':
+                return chain.get('tvl', 0), chain.get('change_24h', 0)
+        return None, None
+    except:
+        return None, None
+
+
+# ================== MAIN DISPLAY ==================
+col1, col2, col3 = st.columns(3)
+
+with col1:
+    price = fetch_price_dexscreener()
+    if price:
+        st.metric("SHIB Price (USD)", f"${price:.8f}")
+    else:
+        st.metric("SHIB Price", "Loading...")
+
+with col2:
+    burn_data = fetch_burn_from_etherscan()
+    if burn_data["burn_percentage"] is not None:
+        st.metric("Total Burned %", f"{burn_data['burn_percentage']:.2f}%")
+        
+        subcol1, subcol2 = st.columns(2)
+        with subcol1:
+            st.metric("24h Burn", "On-chain soon")
+        with subcol2:
+            st.metric("7d Burn", "On-chain soon")
+    else:
+        st.metric("Total Burned %", "Loading...")
+
+with col3:
+    cg = fetch_coingecko_data()
+    if cg:
+        st.metric("24h Volume", f"${cg['volume_24h']:,.0f}", 
+                 f"{cg['price_change_24h']:.1f}%")
+    else:
+        st.metric("24h Volume", "Loading...")
+
+# ================== MVRV Z-SCORE SECTION ==================
+st.subheader("📊 MVRV Z-Score (Price-Based Approximation)")
+st.caption("True on-chain Realized Cap for ERC-20s like SHIB is not freely available. This uses rolling price statistics.")
+
+df_hist = fetch_historical_prices(days=365)
+
+if not df_hist.empty:
+    current_mcap = df_hist['market_cap'].iloc[-1]
+    st.metric("Current Market Cap", f"${current_mcap:,.0f}")
+    
+    periods = [3, 7, 30, 90, 180]
+    cols = st.columns(len(periods))
+    
+    for idx, p in enumerate(periods):
+        z = calculate_mvrv_z_score(df_hist['price'], p)
+        with cols[idx]:
+            if z is not None:
+                if z > 2.0:
+                    delta = "Overvalued"
+                    color = "inverse"
+                elif z < -1.5:
+                    delta = "Undervalued"
+                    color = "normal"
+                else:
+                    delta = "Neutral"
+                    color = "normal"
+                st.metric(f"{p}d Z-Score", f"{z:.2f}", delta=delta, delta_color=color)
+            else:
+                st.metric(f"{p}d Z-Score", "N/A")
+else:
+    st.warning("Could not load historical data for MVRV calculation.")
+
+# ================== ECOSYSTEM METRICS ==================
+st.subheader("🌐 Ecosystem & Activity Metrics")
+
+tvl, tvl_24h = fetch_shibarium_tvl()
+col_a, col_b, col_c = st.columns(3)
+
+with col_a:
+    if tvl is not None:
+        st.metric("Shibarium TVL", f"${tvl:,.0f}", f"{tvl_24h:.1f}% 24h")
+    else:
+        st.metric("Shibarium TVL", "N/A")
+
+with col_b:
+    st.info("**Burn Data**: Direct from Etherscan (on-chain balances)")
+
+with col_c:
+    st.info("**Decision Signals**\n• Low Z-Score + Rising Burns/TVL = **Buy**\n• High Z-Score + Declining Activity = **Sell**")
+
+st.caption("**Burn Source**: Etherscan API (on-chain) • Much more stable than web scraping")
