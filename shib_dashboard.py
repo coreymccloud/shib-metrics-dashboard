@@ -50,7 +50,7 @@ def fetch_burn_from_shibburn():
         resp = requests.get(url, headers=headers, timeout=20)
         html = resp.text
 
-        # Total Burned Percentage
+        # Total Burned %
         percent_match = re.search(r'Total Burned\s*(\d+\.\d+)%', html)
         burn_percentage = float(percent_match.group(1)) if percent_match else None
 
@@ -68,7 +68,7 @@ def fetch_burn_from_shibburn():
             "burn_7d": burn_7d
         }
     except Exception as e:
-        st.error(f"Burn data fetch error: {str(e)}")
+        st.error(f"🔴 Burn data fetch error: {str(e)}")
         return {"burn_percentage": None, "burn_24h": None, "burn_7d": None}
 
 
