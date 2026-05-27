@@ -24,7 +24,7 @@ st.title("🐕 Shiba Inu (SHIB) Burn & Price Tracker")
 st.caption("🔄 Auto-refreshes every 15s • DexScreener + Burnalytics")
 
 # ================== API KEYS ==================
-BURNALYTICS_API_KEY = st.secrets.get("BURNALYTICS_API_KEY", "37606ee6d9f5a87c7f614c84dbe21299b7a639ff4dc49617c4e40834a27b8092")  # Add this in Streamlit secrets
+BURNALYTICS_API_KEY = st.secrets.get("BURNALYTICS_API_KEY", "")  # Add this in Streamlit secrets
 ETHERSCAN_FALLBACK = False  # Removed Etherscan as requested
 
 SHIB_CONTRACT = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"
