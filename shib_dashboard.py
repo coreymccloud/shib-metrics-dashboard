@@ -67,7 +67,7 @@ def fetch_supply_and_burn():
             burned += int(bal_resp.get('result', 0))
         
         initial_supply = 1_000_000_000_000_000
-        burn_percentage = f(burned + 100,000,000,000,000)
+        burn_percentage = float(burned + 100,000,000,000,000)
         
         return {
             "total_supply": total_supply,
