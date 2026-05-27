@@ -1,6 +1,6 @@
 import streamlit as st
 import requests
-from datetime import datetime, timedelta
+from datetime import datetime
 import time
 
 # ========================= CONFIG =========================
@@ -10,27 +10,16 @@ st.set_page_config(
     layout="centered"
 )
 
-# Auto-refresh every 15s
-st.markdown("""
-    <script>
-        function autoRefresh() {
-            setTimeout(() => window.location.reload(), 15000);
-        }
-        window.onload = autoRefresh;
-    </script>
-""", unsafe_allow_html=True)
-
 st.title("🐕 Shiba Inu (SHIB) Burn & Price Tracker")
-st.caption("🔄 Auto-refreshes every 15s • DexScreener + Etherscan V2")
+st.caption("🔄 Auto-refreshes every 15s • DexScreener + Etherscan")
 
-# ================== ETHERSCAN API KEY ==================
+# ================== API KEY ==================
 ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "S1JBXUTRAPY3WGTA5ZA4N7IRZEFVR25ZIC")
 
 SHIB_CONTRACT = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"
 CHAIN_ID = 1
 INITIAL_SUPPLY = 1_000_000_000_000_000
 
-# Expanded burn addresses (main ones from Etherscan)
 BURN_ADDRESSES = [
     "0x000000000000000000000000000000000000dead",
     "0xdead000000000000000042069420694206942069",
@@ -57,42 +46,62 @@ def fetch_price_dexscreener():
         return None
 
 def fetch_current_supply_and_burn():
+    """Cached supply + total burned"""
+    now = time.time()
+    
+    if "supply_cache" in st.session_state and now - st.session_state.supply_time < 180:  # 3 minutes
+        return st.session_state.supply_cache
+
     try:
         base_url = "https://api.etherscan.io/v2/api"
         
-        # Total Supply
+        # 1. Total Supply
         supply_url = f"{base_url}?chainid={CHAIN_ID}&module=stats&action=tokensupply&contractaddress={SHIB_CONTRACT}&apikey={ETHERSCAN_API_KEY}"
         supply_resp = requests.get(supply_url, timeout=10).json()
+        
+        if supply_resp.get('status') != "1":
+            raise Exception(supply_resp.get('result', 'Unknown error'))
+            
         total_supply = int(supply_resp.get('result', 0))
         
-        # Current burned balance
+        # 2. Burned balance (only if cache is old)
         burned = 0
-        for addr in BURN_ADDRESSES:
+        for addr in BURN_ADDRESSES[:4]:  # Limit to top 4 for speed
             bal_url = f"{base_url}?chainid={CHAIN_ID}&module=account&action=tokenbalance&contractaddress={SHIB_CONTRACT}&address={addr}&tag=latest&apikey={ETHERSCAN_API_KEY}"
             bal_resp = requests.get(bal_url, timeout=10).json()
-            burned += int(bal_resp.get('result', 0))
+            if bal_resp.get('status') == "1":
+                burned += int(bal_resp.get('result', 0))
         
         burn_percentage = (burned / INITIAL_SUPPLY) * 100 if INITIAL_SUPPLY > 0 else 0
-        
-        return {
+
+        data = {
             "total_supply": total_supply,
             "burned": burned,
             "burn_percentage": burn_percentage
         }
+        
+        # Cache it
+        st.session_state.supply_cache = data
+        st.session_state.supply_time = now
+        return data
+        
     except Exception as e:
-        st.error(f"Etherscan error: {e}")
+        error_msg = str(e)
+        if "rate limit" in error_msg.lower() or "Max calls" in error_msg:
+            st.warning("⏳ Etherscan rate limit reached. Using cached data.")
+            if "supply_cache" in st.session_state:
+                return st.session_state.supply_cache
+        else:
+            st.error(f"Etherscan error: {error_msg}")
         return None
 
 def fetch_burn_rates():
-    """Fetch 24h/7d/30d burns with caching"""
+    """Cached burn rates - only refreshed every 3 minutes"""
     now = time.time()
     
-    # Cache for 90 seconds
-    if ("burn_rates_cache" in st.session_state and 
-        "burn_rates_time" in st.session_state and 
-        now - st.session_state.burn_rates_time < 90):
+    if "burn_rates_cache" in st.session_state and now - st.session_state.burn_rates_time < 180:
         return st.session_state.burn_rates_cache
-    
+
     try:
         base_url = "https://api.etherscan.io/v2/api"
         periods = {
@@ -107,9 +116,9 @@ def fetch_burn_rates():
             tx_url = (
                 f"{base_url}?chainid={CHAIN_ID}&module=account&action=tokentx"
                 f"&contractaddress={SHIB_CONTRACT}&address={addr}"
-                f"&sort=desc&page=1&offset=5000&apikey={ETHERSCAN_API_KEY}"
+                f"&sort=desc&page=1&offset=2000&apikey={ETHERSCAN_API_KEY}"  # Reduced offset
             )
-            resp = requests.get(tx_url, timeout=15).json()
+            resp = requests.get(tx_url, timeout=12).json()
             
             if resp.get("status") != "1" or not resp.get("result"):
                 continue
@@ -118,25 +127,26 @@ def fetch_burn_rates():
                 if tx.get("to", "").lower() != addr.lower():
                     continue
                 timestamp = int(tx.get("timeStamp", 0))
-                value = int(tx.get("value", 0)) // 10**18  # to whole SHIB
+                value = int(tx.get("value", 0)) // 10**18
                 
                 for period, cutoff in periods.items():
                     if timestamp >= cutoff:
                         results[period] += value
                     else:
-                        break  # older transactions
+                        break
         
-        # Cache it
         st.session_state.burn_rates_cache = results
         st.session_state.burn_rates_time = now
         return results
         
     except Exception as e:
-        st.warning(f"Burn rate fetch issue: {e}")
-        # Fallback to zero
+        if "rate limit" in str(e).lower():
+            st.warning("⏳ Rate limit — using previous burn rates.")
+            if "burn_rates_cache" in st.session_state:
+                return st.session_state.burn_rates_cache
         return {"24h": 0, "7d": 0, "30d": 0}
 
-# ===================== FETCH DATA =====================
+# ===================== MAIN DATA FETCH =====================
 price = fetch_price_dexscreener()
 supply_data = fetch_current_supply_and_burn()
 burn_rates = fetch_burn_rates()
@@ -144,13 +154,12 @@ burn_rates = fetch_burn_rates()
 if price is not None and supply_data:
     col1, col2 = st.columns(2)
     with col1:
-        st.metric("💰 Current SHIB Price", f"${price:.8f}")
+        st.metric("💰 Current SHIB Price (USD)", f"${price:.8f}")
     with col2:
         st.metric("🔥 Total Burned", f"{supply_data['burn_percentage']:.4f}%")
 
     st.divider()
 
-    # ================= BURN RATES =================
     st.subheader("🔥 Burn Rates")
     r1, r2, r3 = st.columns(3)
     with r1:
@@ -172,10 +181,10 @@ if price is not None and supply_data:
         st.metric("Circulating Supply", f"{supply_data['total_supply'] - supply_data['burned']:,.0f}")
 
     st.success(f"✅ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}")
-    st.caption("Price: DexScreener • Burn Data: Etherscan (multiple addresses + caching)")
+    st.caption("• Price: DexScreener • Data: Etherscan (heavily cached)")
 
 else:
-    st.error("Failed to fetch data. Check your Etherscan API key.")
+    st.error("Failed to fetch live data. Please wait a few seconds and refresh.")
 
 st.markdown("---")
 st.caption("Initial Supply: 1,000,000,000,000,000 SHIB")
