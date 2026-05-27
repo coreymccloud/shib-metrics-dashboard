@@ -10,27 +10,26 @@ st.set_page_config(
     layout="centered"
 )
 
-st.title("🐕 Shiba Inu (SHIB) Burn & Price Tracker")
-st.caption("🔄 Auto-refreshes every 15s • DexScreener + Etherscan")
+# Auto-refresh every 15 seconds
+st.markdown("""
+    <script>
+        function autoRefresh() {
+            setTimeout(() => window.location.reload(), 15000);
+        }
+        window.onload = autoRefresh;
+    </script>
+""", unsafe_allow_html=True)
 
-# ================== API KEY ==================
-ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "S1JBXUTRAPY3WGTA5ZA4N7IRZEFVR25ZIC")
+st.title("🐕 Shiba Inu (SHIB) Burn & Price Tracker")
+st.caption("🔄 Auto-refreshes every 15s • DexScreener + Burnalytics")
+
+# ================== API KEYS ==================
+BURNALYTICS_API_KEY = st.secrets.get("BURNALYTICS_API_KEY", "37606ee6d9f5a87c7f614c84dbe21299b7a639ff4dc49617c4e40834a27b8092")  # Add this in Streamlit secrets
+ETHERSCAN_FALLBACK = False  # Removed Etherscan as requested
 
 SHIB_CONTRACT = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"
 CHAIN_ID = 1
 INITIAL_SUPPLY = 1_000_000_000_000_000
-
-BURN_ADDRESSES = [
-    "0x000000000000000000000000000000000000dead",
-    "0xdead000000000000000042069420694206942069",
-    "0xf7a0383750fef5abace57cc4c9ff98e3790202b3",
-    "0xadf86e75d8f0f57e0288d0970e7407eaa49b3cab",
-    "0x556219c84974ada96e9382e041bac26398d9e214",
-    "0x9813037ee2218799597d83d4a5b6f3b6778218d9",
-    "0x11450058d796b02eb53e65374be59cff65d3fe7f",
-    "0x27c70cd1946795b66be9d954418546998b546634",
-    "0x8b3192f5eebd8579568a2ed41e6feb402f93f73f",
-]
 
 def fetch_price_dexscreener():
     try:
@@ -45,121 +44,70 @@ def fetch_price_dexscreener():
     except:
         return None
 
-def fetch_current_supply_and_burn():
-    """Cached supply + total burned"""
-    now = time.time()
+def fetch_burnalytics_stats():
+    """Main stats: total burned + percentage"""
+    if not BURNALYTICS_API_KEY:
+        st.error("Burnalytics API key is missing. Add `BURNALYTICS_API_KEY` to Streamlit secrets.")
+        return None
     
-    if "supply_cache" in st.session_state and now - st.session_state.supply_time < 180:  # 3 minutes
-        return st.session_state.supply_cache
-
     try:
-        base_url = "https://api.etherscan.io/v2/api"
+        url = f"https://www.burnalytics.com/api/v1/chain/{CHAIN_ID}/token/{SHIB_CONTRACT}/stats"
+        headers = {"X-API-Key": BURNALYTICS_API_KEY}
+        resp = requests.get(url, headers=headers, timeout=12)
+        data = resp.json()
         
-        # 1. Total Supply
-        supply_url = f"{base_url}?chainid={CHAIN_ID}&module=stats&action=tokensupply&contractaddress={SHIB_CONTRACT}&apikey={ETHERSCAN_API_KEY}"
-        supply_resp = requests.get(supply_url, timeout=10).json()
+        total_burned = int(data.get("total_burned", 0))
+        burn_percentage = (total_burned / INITIAL_SUPPLY) * 100
         
-        if supply_resp.get('status') != "1":
-            raise Exception(supply_resp.get('result', 'Unknown error'))
-            
-        total_supply = int(supply_resp.get('result', 0))
-        
-        # 2. Burned balance (only if cache is old)
-        burned = 0
-        for addr in BURN_ADDRESSES[:4]:  # Limit to top 4 for speed
-            bal_url = f"{base_url}?chainid={CHAIN_ID}&module=account&action=tokenbalance&contractaddress={SHIB_CONTRACT}&address={addr}&tag=latest&apikey={ETHERSCAN_API_KEY}"
-            bal_resp = requests.get(bal_url, timeout=10).json()
-            if bal_resp.get('status') == "1":
-                burned += int(bal_resp.get('result', 0))
-        
-        burn_percentage = (burned / INITIAL_SUPPLY) * 100 if INITIAL_SUPPLY > 0 else 0
-
-        data = {
-            "total_supply": total_supply,
-            "burned": burned,
+        return {
+            "total_burned": total_burned,
             "burn_percentage": burn_percentage
         }
-        
-        # Cache it
-        st.session_state.supply_cache = data
-        st.session_state.supply_time = now
-        return data
-        
     except Exception as e:
-        error_msg = str(e)
-        if "rate limit" in error_msg.lower() or "Max calls" in error_msg:
-            st.warning("⏳ Etherscan rate limit reached. Using cached data.")
-            if "supply_cache" in st.session_state:
-                return st.session_state.supply_cache
-        else:
-            st.error(f"Etherscan error: {error_msg}")
+        st.error(f"Burnalytics stats error: {e}")
         return None
 
-def fetch_burn_rates():
-    """Cached burn rates - only refreshed every 3 minutes"""
-    now = time.time()
+def fetch_burnalytics_burn_rates():
+    """24h, 7d, 30d burn amounts using chart endpoints"""
+    if not BURNALYTICS_API_KEY:
+        return {"24h": 0, "7d": 0, "30d": 0}
     
-    if "burn_rates_cache" in st.session_state and now - st.session_state.burn_rates_time < 180:
-        return st.session_state.burn_rates_cache
-
     try:
-        base_url = "https://api.etherscan.io/v2/api"
-        periods = {
-            "24h": int(now) - 86400,
-            "7d": int(now) - 86400 * 7,
-            "30d": int(now) - 86400 * 30
-        }
+        rates = {}
+        headers = {"X-API-Key": BURNALYTICS_API_KEY}
         
-        results = {"24h": 0, "7d": 0, "30d": 0}
-        
-        for addr in BURN_ADDRESSES:
-            tx_url = (
-                f"{base_url}?chainid={CHAIN_ID}&module=account&action=tokentx"
-                f"&contractaddress={SHIB_CONTRACT}&address={addr}"
-                f"&sort=desc&page=1&offset=2000&apikey={ETHERSCAN_API_KEY}"  # Reduced offset
-            )
-            resp = requests.get(tx_url, timeout=12).json()
+        for period in ["24h", "7d", "30d"]:
+            url = f"https://www.burnalytics.com/api/v1/chain/{CHAIN_ID}/token/{SHIB_CONTRACT}/chart/{period}"
+            resp = requests.get(url, headers=headers, timeout=12)
+            data = resp.json()
             
-            if resp.get("status") != "1" or not resp.get("result"):
-                continue
+            if isinstance(data, list) and len(data) > 0:
+                # Sum amounts across the period (in raw wei)
+                total = sum(int(item.get("amount", 0)) for item in data)
+                rates[period] = total // 10**18  # Convert to whole SHIB
+            else:
+                rates[period] = 0
                 
-            for tx in resp["result"]:
-                if tx.get("to", "").lower() != addr.lower():
-                    continue
-                timestamp = int(tx.get("timeStamp", 0))
-                value = int(tx.get("value", 0)) // 10**18
-                
-                for period, cutoff in periods.items():
-                    if timestamp >= cutoff:
-                        results[period] += value
-                    else:
-                        break
-        
-        st.session_state.burn_rates_cache = results
-        st.session_state.burn_rates_time = now
-        return results
-        
+        return rates
     except Exception as e:
-        if "rate limit" in str(e).lower():
-            st.warning("⏳ Rate limit — using previous burn rates.")
-            if "burn_rates_cache" in st.session_state:
-                return st.session_state.burn_rates_cache
+        st.warning(f"Burnalytics burn rates error: {e}")
         return {"24h": 0, "7d": 0, "30d": 0}
 
-# ===================== MAIN DATA FETCH =====================
+# ===================== FETCH DATA =====================
 price = fetch_price_dexscreener()
-supply_data = fetch_current_supply_and_burn()
-burn_rates = fetch_burn_rates()
+burn_stats = fetch_burnalytics_stats()
+burn_rates = fetch_burnalytics_burn_rates()
 
-if price is not None and supply_data:
+if price is not None and burn_stats:
     col1, col2 = st.columns(2)
     with col1:
         st.metric("💰 Current SHIB Price (USD)", f"${price:.8f}")
     with col2:
-        st.metric("🔥 Total Burned", f"{supply_data['burn_percentage']:.4f}%")
+        st.metric("🔥 Total Burned", f"{burn_stats['burn_percentage']:.4f}%")
 
     st.divider()
 
+    # ================= BURN RATES =================
     st.subheader("🔥 Burn Rates")
     r1, r2, r3 = st.columns(3)
     with r1:
@@ -174,17 +122,17 @@ if price is not None and supply_data:
     st.subheader("Supply Details")
     c1, c2, c3 = st.columns(3)
     with c1:
-        st.metric("Total Supply", f"{supply_data['total_supply']:,.0f}")
+        st.metric("Initial Supply", f"{INITIAL_SUPPLY:,.0f}")
     with c2:
-        st.metric("Tokens Burned", f"{supply_data['burned']:,.0f}")
+        st.metric("Tokens Burned", f"{burn_stats['total_burned']:,.0f}")
     with c3:
-        st.metric("Circulating Supply", f"{supply_data['total_supply'] - supply_data['burned']:,.0f}")
+        st.metric("Remaining Supply", f"{INITIAL_SUPPLY - burn_stats['total_burned']:,.0f}")
 
     st.success(f"✅ Last updated: {datetime.now().strftime('%Y-%m-%d %H:%M:%S UTC')}")
-    st.caption("• Price: DexScreener • Data: Etherscan (heavily cached)")
+    st.caption("• Price: DexScreener • Burn Data: Burnalytics API")
 
 else:
-    st.error("Failed to fetch live data. Please wait a few seconds and refresh.")
+    st.error("Failed to fetch data. Check your Burnalytics API key and internet connection.")
 
 st.markdown("---")
-st.caption("Initial Supply: 1,000,000,000,000,000 SHIB")
+st.caption("Initial Supply: 1,000,000,000,000,000 SHIB | Powered by Burnalytics")
