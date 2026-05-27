@@ -94,7 +94,7 @@ if price is not None and supply_data:
     with col2:
         st.metric(
             label="🔥 Total Burn Percentage",
-            value=f"{supply_data['burn_percentage']:0f}%"
+            value=f"{supply_data['burn_percentage']:,.0f}%"
         )
 
     st.divider()
