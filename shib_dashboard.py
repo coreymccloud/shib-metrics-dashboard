@@ -98,9 +98,6 @@ price = fetch_price_dexscreener()
 burn_stats = fetch_burnalytics_stats()
 burn_rates = fetch_burnalytics_burn_rates()
 
-st.write("Burnalytics Key Loaded:", "✅ Yes" if st.secrets.get("BURNALYTICS_API_KEY") else "❌ No")
-st.write(BURNALYTICS_API_KEY)
-
 if price is not None and burn_stats:
     col1, col2 = st.columns(2)
     with col1:
