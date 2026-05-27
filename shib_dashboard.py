@@ -24,7 +24,7 @@ st.caption("🔄 Auto-refreshes every 15s • DexScreener + Etherscan V2")
 
 # ================== ETHERSCAN API KEY ==================
 # Get free key here: https://etherscan.io/apidashboard
-ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "S1JBXUTRAPY3WGTA5ZA4N7IRZEFVR25ZIC")  # Replace with your key
+ETHERSCAN_API_KEY = st.secrets.get("ETHERSCAN_API_KEY", "YourApiKeyToken")  # Replace with your key
 
 # SHIB Contract on Ethereum (chainid=1)
 SHIB_CONTRACT = "0x95ad61b0a150d79219dcf64e1e6cc01f0b64c4ce"
@@ -67,7 +67,7 @@ def fetch_supply_and_burn():
             burned += int(bal_resp.get('result', 0))
         
         initial_supply = 1_000_000_000_000_000
-        burn_percentage = (burned + 100,000,000,000,000)
+        burn_percentage = (burned / initial_supply) * 100 if initial_supply > 0 else 0
         
         return {
             "total_supply": total_supply,
@@ -94,7 +94,7 @@ if price is not None and supply_data:
     with col2:
         st.metric(
             label="🔥 Total Burn Percentage",
-            value=f"{supply_data['burn_percentage']:.0f}%"
+            value=f"{supply_data['burn_percentage']:.4f}%"
         )
 
     st.divider()
