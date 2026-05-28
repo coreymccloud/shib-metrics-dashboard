@@ -45,15 +45,22 @@ def fetch_price_dexscreener():
         return None
 
 def fetch_burnalytics_stats():
-    """Main stats: total burned + percentage"""
     if not BURNALYTICS_API_KEY:
-        st.error("Burnalytics API key is missing. Add `BURNALYTICS_API_KEY` to Streamlit secrets.")
+        st.error("❌ BURNALYTICS_API_KEY is missing in secrets.")
         return None
     
     try:
         url = f"https://www.burnalytics.com/api/v1/chain/{CHAIN_ID}/token/{SHIB_CONTRACT}/stats"
         headers = {"X-API-Key": BURNALYTICS_API_KEY}
-        resp = requests.get(url, headers=headers, timeout=12)
+        
+        resp = requests.get(url, headers=headers, timeout=15)
+        
+        st.info(f"🔍 Debug: Stats API responded with status {resp.status_code}")  # Temporary debug line
+        
+        if resp.status_code != 200:
+            st.error(f"❌ Burnalytics Stats Error: {resp.status_code} - {resp.text[:300]}")
+            return None
+            
         data = resp.json()
         
         total_burned = int(data.get("total_burned", 0))
@@ -64,13 +71,12 @@ def fetch_burnalytics_stats():
             "burn_percentage": burn_percentage
         }
     except Exception as e:
-        st.error(f"Burnalytics stats error: {e}")
+        st.error(f"❌ Burnalytics Stats Failed: {str(e)}")
         return None
 
 def fetch_burnalytics_burn_rates():
-    """24h, 7d, 30d burn amounts using chart endpoints"""
     if not BURNALYTICS_API_KEY:
-        return {"24h": 100, "7d": 0, "30d": 2000}
+        return {"24h": 0, "7d": 0, "30d": 0}
     
     try:
         rates = {}
@@ -79,18 +85,22 @@ def fetch_burnalytics_burn_rates():
         for period in ["24h", "7d", "30d"]:
             url = f"https://www.burnalytics.com/api/v1/chain/{CHAIN_ID}/token/{SHIB_CONTRACT}/chart/{period}"
             resp = requests.get(url, headers=headers, timeout=12)
-            data = resp.json()
             
+            if resp.status_code != 200:
+                st.warning(f"Chart {period} returned {resp.status_code}")
+                rates[period] = 0
+                continue
+                
+            data = resp.json()
             if isinstance(data, list) and len(data) > 0:
-                # Sum amounts across the period (in raw wei)
                 total = sum(int(item.get("amount", 0)) for item in data)
-                rates[period] = total // 10**18  # Convert to whole SHIB
+                rates[period] = total // 10**18
             else:
                 rates[period] = 0
                 
         return rates
     except Exception as e:
-        st.warning(f"Burnalytics burn rates error: {e}")
+        st.warning(f"Burn rates failed: {str(e)}")
         return {"24h": 0, "7d": 0, "30d": 0}
 
 # ===================== FETCH DATA =====================
